@@ -1,0 +1,28 @@
+# Azure Developer CLI (azd) project configuration
+# https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/azd-schema
+name: allowance-app
+metadata:
+  template: allowance-app@1.0.0
+
+infra:
+  provider: bicep
+  path: infra
+  module: main
+
+services:
+  # React SPA — hosted on Azure Static Web Apps (Free tier)
+  web:
+    project: .
+    dist: dist
+    host: staticwebapp
+    hooks:
+      prepackage:
+        shell: pwsh
+        run: npm run build
+        interactive: false
+
+  # Azure Functions API — Consumption plan, TypeScript
+  api:
+    project: ./api
+    host: function
+    language: ts

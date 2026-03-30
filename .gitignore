@@ -22,3 +22,18 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Azure Functions local settings (contains secrets/connection strings)
+api/local.settings.json
+api/dist/
+
+# AZD environment state (contains provisioned resource names and env outputs)
+# The .azure/ folder is intentionally kept for plan.md but .env files within it are not
+.azure/**/.env
+.azure/**/config.json
+
+# Local env overrides (contains VITE_ secrets for local dev)
+.env.local
+
+# Internal security tracker — MUST NOT be committed
+.internal/

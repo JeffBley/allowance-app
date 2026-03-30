@@ -1,0 +1,25 @@
+{
+  "name": "allowance-app-api",
+  "version": "1.0.0",
+  "description": "Azure Functions API for the Allowance App",
+  "main": "dist/src/functions/*.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "prestart": "npm run build",
+    "start": "func start",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.5.0",
+    "@azure/cosmos": "^4.2.0",
+    "jose": "^5.9.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "typescript": "^5.7.0"
+  }
+}
