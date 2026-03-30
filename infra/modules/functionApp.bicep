@@ -1,14 +1,16 @@
 // ---------------------------------------------------------------------------
-// Azure Functions — Consumption (Y1) plan, Node.js 20, TypeScript
+// Azure Functions — Flex Consumption plan, Node.js 20, TypeScript
+// Flex Consumption uses a different quota bucket than Y1 Dynamic — avoids
+// the "Dynamic VMs" quota limitation common on personal/VSE subscriptions.
 // System-assigned managed identity is used to access Key Vault.
-// App settings use a Key Vault reference for the Cosmos DB connection string.
 //
 // Deployment order within this module:
-//   1. storageAccount + hostingPlan (parallel)
-//   2. funcApp site (establishes managed identity + principalId)
-//   3. kvSecretsUserRole (grants Function App MI read access to Key Vault)
-//   4. appSettings (depends on role assignment — uses KV reference)
-//   5. corsConfig (allow SWA hostname + localhost)
+//   1. storageAccount + managed identity for storage (parallel)
+//   2. hostingPlan (Flex Consumption, Linux)
+//   3. funcApp site (establishes MI + principalId)
+//   4. kvSecretsUserRole + storageBlobRole (parallel, then wait)
+//   5. appSettings (Key Vault reference for Cosmos DB connection string)
+//   6. corsConfig
 // ---------------------------------------------------------------------------
 
 param location string
@@ -39,7 +41,7 @@ param externalIdTenantId string = ''
 param externalIdClientId string = ''
 
 // ---------------------------------------------------------------------------
-// Storage Account (required by Consumption plan Functions host)
+// Storage Account (required by Flex Consumption — identity-based connection)
 // ---------------------------------------------------------------------------
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
@@ -47,7 +49,7 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   location: location
   tags: tags
   sku: {
-    name: 'Standard_LRS' // Locally redundant — sufficient for Functions internal storage
+    name: 'Standard_LRS'
   }
   kind: 'StorageV2'
   properties: {
@@ -57,8 +59,17 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   }
 }
 
+// Flex Consumption requires this container to exist for deployment package uploads
+resource deploymentPackagesContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  name: '${storageAccount.name}/default/deploymentpackages'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
 // ---------------------------------------------------------------------------
-// Consumption Hosting Plan (Y1 / Dynamic)
+// Flex Consumption Hosting Plan (Linux, FC1 SKU)
+// This avoids the "Dynamic VMs" quota limitation of the Y1 Consumption plan.
 // ---------------------------------------------------------------------------
 
 resource hostingPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
@@ -66,26 +77,25 @@ resource hostingPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   location: location
   tags: tags
   sku: {
-    name: 'Y1'
-    tier: 'Dynamic'
+    name: 'FC1'
+    tier: 'FlexConsumption'
   }
   kind: 'functionapp'
   properties: {
-    reserved: false // Windows
+    reserved: true // Required for Linux
   }
 }
 
 // ---------------------------------------------------------------------------
-// Function App site (system-assigned identity established here)
-// App settings are applied in a separate resource (appSettings) below,
-// AFTER the Key Vault role is assigned, to ensure the KV reference resolves.
+// Function App site — Flex Consumption, Linux, Node 20
+// System-assigned identity established here for Key Vault + Storage access.
 // ---------------------------------------------------------------------------
 
 resource funcApp 'Microsoft.Web/sites@2023-12-01' = {
   name: name
   location: location
   tags: union(tags, { 'azd-service-name': 'api' })
-  kind: 'functionapp'
+  kind: 'functionapp,linux'
   identity: {
     type: 'SystemAssigned'
   }
@@ -93,33 +103,61 @@ resource funcApp 'Microsoft.Web/sites@2023-12-01' = {
     serverFarmId: hostingPlan.id
     httpsOnly: true
     siteConfig: {
-      // Minimum TLS 1.2 for all inbound connections
       minTlsVersion: '1.2'
       ftpsState: 'Disabled'
-      // Runtime settings — app settings applied separately below
-      nodeVersion: '~20'
+    }
+    functionAppConfig: {
+      deployment: {
+        storage: {
+          type: 'blobContainer'
+          value: '${storageAccount.properties.primaryEndpoints.blob}deploymentpackages'
+          authentication: {
+            type: 'SystemAssignedIdentity'
+          }
+        }
+      }
+      scaleAndConcurrency: {
+        maximumInstanceCount: 40
+        instanceMemoryMB: 2048
+      }
+      runtime: {
+        name: 'node'
+        version: '20'
+      }
     }
   }
 }
 
 // ---------------------------------------------------------------------------
-// Role assignment: Function App MI → Key Vault Secrets User
-// This must complete BEFORE the app settings with the KV reference are applied.
-// Role GUID: 4633458b-17de-408a-b874-0445c86b69e6 = Key Vault Secrets User
+// Role assignments — both must complete before app settings (KV reference)
 // ---------------------------------------------------------------------------
 
 resource existingKeyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   name: keyVaultName
 }
 
+// Key Vault Secrets User — lets the Function App read secrets
 resource kvSecretsUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  // Deterministic GUID ensures idempotent role assignment
   name: guid(existingKeyVault.id, funcApp.id, '4633458b-17de-408a-b874-0445c86b69e6')
   scope: existingKeyVault
   properties: {
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
-      '4633458b-17de-408a-b874-0445c86b69e6' // Key Vault Secrets User (read-only)
+      '4633458b-17de-408a-b874-0445c86b69e6' // Key Vault Secrets User
+    )
+    principalId: funcApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Storage Blob Data Contributor — required by Flex Consumption for identity-based deployment package storage
+resource storageBlobRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, funcApp.id, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'ba92f5b4-2d11-453d-a403-e96b0029c9fe' // Storage Blob Data Contributor
     )
     principalId: funcApp.identity.principalId
     principalType: 'ServicePrincipal'
@@ -127,36 +165,27 @@ resource kvSecretsUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' 
 }
 
 // ---------------------------------------------------------------------------
-// App Settings — applied after KV role assignment to ensure reference resolves
+// App Settings — applied after KV + Storage role assignments
+// Flex Consumption doesn't use AzureWebJobsStorage connection string —
+// storage access uses managed identity (role assigned above).
 // ---------------------------------------------------------------------------
 
 resource appSettings 'Microsoft.Web/sites/config@2023-12-01' = {
   parent: funcApp
   name: 'appsettings'
   properties: {
-    // Azure Functions host settings
-    AzureWebJobsStorage: 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};AccountKey=${storageAccount.listKeys().keys[0].value};EndpointSuffix=core.windows.net'
-    WEBSITE_CONTENTAZUREFILECONNECTIONSTRING: 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};AccountKey=${storageAccount.listKeys().keys[0].value};EndpointSuffix=core.windows.net'
-    WEBSITE_CONTENTSHARE: toLower(name)
     FUNCTIONS_EXTENSION_VERSION: '~4'
-    FUNCTIONS_WORKER_RUNTIME: 'node'
-    WEBSITE_NODE_DEFAULT_VERSION: '~20'
 
     // Cosmos DB connection string via Key Vault reference.
-    // Requires the managed identity to have Key Vault Secrets User role (assigned above).
-    // Note: RBAC propagation can take up to 5 minutes; the app may fail on cold start
-    // immediately after provisioning. A restart after 5 minutes resolves this. See KI-0004.
+    // Requires Key Vault Secrets User role (assigned above).
     COSMOS_DB_CONNECTION_STRING: '@Microsoft.KeyVault(SecretUri=${cosmosDbConnectionStringSecretUri})'
 
-    // Entra External ID settings — used by the auth middleware for JWT validation
+    // Entra External ID — JWT validation in auth middleware
     EXTERNAL_ID_TENANT_ID: externalIdTenantId
     EXTERNAL_ID_CLIENT_ID: externalIdClientId
     EXTERNAL_ID_AUTHORITY: 'https://bleytech.ciamlogin.com/'
-
-    // Application Insights (connection string populated by Bicep if AI resource added later)
-    // APPLICATIONINSIGHTS_CONNECTION_STRING: ''
   }
-  dependsOn: [kvSecretsUserRole] // Ensures KV role exists before KV reference is applied
+  dependsOn: [kvSecretsUserRole, storageBlobRole]
 }
 
 // ---------------------------------------------------------------------------

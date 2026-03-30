@@ -37,8 +37,8 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     // Soft delete protects against accidental / malicious deletion
     enableSoftDelete: true
     softDeleteRetentionInDays: 7
-    // Purge protection prevents permanent deletion during retention period
-    enablePurgeProtection: false // Keep false for dev; enable for prod
+    // enablePurgeProtection omitted — defaults to false (disabled) for dev.
+    // To enable for prod, add: enablePurgeProtection: true (irreversible).
     publicNetworkAccess: 'Enabled'
   }
 }
