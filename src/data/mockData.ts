@@ -117,13 +117,14 @@ export function computeKidView(member: FamilyMember, allTransactions: Transactio
   const ks = member.kidSettings
 
   // Compute balance relative to the override floor.
-  // If balanceOverrideAt is set, only transactions on or after the override date
-  // are summed on top of the override amount.
-  // Transaction dates are YYYY-MM-DD; overrideAt is a full ISO datetime —
-  // we truncate to date-only before comparing so same-day transactions are included.
+  // If balanceOverrideAt is set, only transactions STRICTLY AFTER the override date
+  // are summed on top of the override amount. Same-day transactions (>= today) are
+  // intentionally excluded — when an admin sets an override they are capturing the
+  // full current balance including any transactions from that same day. Including
+  // same-day transactions would double-count them (KI-fix).
   const overrideAt = ks?.balanceOverrideAt
   const overrideDate = overrideAt ? overrideAt.slice(0, 10) : null
-  const txnsForBalance = overrideDate ? txns.filter(t => t.date.slice(0, 10) >= overrideDate) : txns
+  const txnsForBalance = overrideDate ? txns.filter(t => t.date.slice(0, 10) > overrideDate) : txns
 
   // purgedBalanceDelta accumulates contributions from transactions that have been deleted
   // from the database but whose financial impact must still be counted.
@@ -138,7 +139,7 @@ export function computeKidView(member: FamilyMember, allTransactions: Transactio
   const balance = balanceCents / 100;
 
   const tithingOwed = (() => {
-    const tixns = overrideDate ? txns.filter(t => t.date.slice(0, 10) >= overrideDate) : txns
+    const tixns = overrideDate ? txns.filter(t => t.date.slice(0, 10) > overrideDate) : txns
     // Accumulate in integer cents to prevent floating-point drift
     const tithableIncomeCents = tixns
       .filter(t => t.category === 'Income' && t.tithable !== false)

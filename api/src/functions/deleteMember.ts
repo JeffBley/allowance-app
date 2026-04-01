@@ -63,7 +63,7 @@ async function deleteMember(request: HttpRequest, context: InvocationContext): P
     // prevent floating-point drift across many transactions (mirrors computeKidView in the frontend)
     const ks = user.kidSettings;
     const overrideDate = ks?.balanceOverrideAt ? ks.balanceOverrideAt.slice(0, 10) : null;
-    const txnsForBalance = overrideDate ? txns.filter(t => t.date.slice(0, 10) >= overrideDate) : txns;
+    const txnsForBalance = overrideDate ? txns.filter(t => t.date.slice(0, 10) > overrideDate) : txns;
 
     const balanceCents =
       Math.round((ks?.balanceOverride    ?? 0) * 100) +
