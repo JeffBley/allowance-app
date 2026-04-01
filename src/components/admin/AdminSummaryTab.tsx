@@ -7,6 +7,7 @@ interface Props {
   kids: KidView[]
   choreBasedIncomeEnabled: boolean
   chores: Chore[]
+  tithingEnabled: boolean
   onDataChange: () => void | Promise<unknown>
 }
 
@@ -32,7 +33,7 @@ function formatMoney(amount: number): string {
   return `$${amount.toFixed(2)}`
 }
 
-export default function AdminSummaryTab({ kids, choreBasedIncomeEnabled, chores, onDataChange }: Props) {
+export default function AdminSummaryTab({ kids, choreBasedIncomeEnabled, chores, tithingEnabled, onDataChange }: Props) {
   const [wizardKid, setWizardKid] = useState<KidView | null>(null)
   const [refreshing, setRefreshing] = useState(false)
 
@@ -81,18 +82,22 @@ export default function AdminSummaryTab({ kids, choreBasedIncomeEnabled, chores,
                     {formatMoney(kid.balance)}
                   </span>
                 </div>
-                <div className="admin-kid-stat">
-                  <span className="admin-kid-stat__label">Tithing Owed</span>
-                  <span className={`admin-kid-stat__value ${kid.tithingOwed > 0 ? 'admin-kid-stat__value--warning' : 'admin-kid-stat__value--success'}`}>
-                    {formatMoney(kid.tithingOwed)}
-                  </span>
-                </div>
-                <div className="admin-kid-stat">
-                  <span className="admin-kid-stat__label">Last Tithing Paid</span>
-                  <span className="admin-kid-stat__value admin-kid-stat__value--muted">
-                    {kid.lastTithingPaid ? formatDate(kid.lastTithingPaid) : 'Never'}
-                  </span>
-                </div>
+                {tithingEnabled && (
+                  <>
+                    <div className="admin-kid-stat">
+                      <span className="admin-kid-stat__label">Tithing Owed</span>
+                      <span className={`admin-kid-stat__value ${kid.tithingOwed > 0 ? 'admin-kid-stat__value--warning' : 'admin-kid-stat__value--success'}`}>
+                        {formatMoney(kid.tithingOwed)}
+                      </span>
+                    </div>
+                    <div className="admin-kid-stat">
+                      <span className="admin-kid-stat__label">Last Tithing Paid</span>
+                      <span className="admin-kid-stat__value admin-kid-stat__value--muted">
+                        {kid.lastTithingPaid ? formatDate(kid.lastTithingPaid) : 'Never'}
+                      </span>
+                    </div>
+                  </>
+                )}
                 {kid.kidSettings?.allowanceEnabled && kid.kidSettings.nextAllowanceDate && (
                   <div className="admin-kid-stat">
                     <span className="admin-kid-stat__label">Next Allowance</span>
@@ -110,6 +115,7 @@ export default function AdminSummaryTab({ kids, choreBasedIncomeEnabled, chores,
       {wizardKid && (
         <AddTransactionWizard
           kid={wizardKid}
+          tithingEnabled={tithingEnabled}
           onClose={() => { setWizardKid(null); onDataChange() }}
         />
       )}
@@ -118,6 +124,7 @@ export default function AdminSummaryTab({ kids, choreBasedIncomeEnabled, chores,
         <AdminChoresSection
           chores={chores}
           kids={kids}
+          tithingEnabled={tithingEnabled}
           onChoresChange={onDataChange}
         />
       )}

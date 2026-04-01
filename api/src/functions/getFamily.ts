@@ -54,6 +54,7 @@ async function getFamily(request: HttpRequest, context: InvocationContext): Prom
         currentUserRole:   scope.role,
         memberLimit:       familyDoc?.memberLimit ?? DEFAULT_MEMBER_LIMIT,
         choreBasedIncomeEnabled: familyDoc?.choreBasedIncomeEnabled ?? false,
+        tithingEnabled:          familyDoc?.tithingEnabled ?? true,
         members:           sanitizedUsers,
       },
     };

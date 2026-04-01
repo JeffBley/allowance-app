@@ -25,6 +25,8 @@ export interface Family extends CosmosDocument {
   memberLimit?: number;
   /** When true, admins can define chores and credit kids for completing them. */
   choreBasedIncomeEnabled?: boolean;
+  /** When false, tithing UI and calculations are hidden for this family. Defaults to true. */
+  tithingEnabled?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -265,7 +267,8 @@ export interface CompleteChoreRequest {
 }
 
 export interface UpdateFamilySettingsRequest {
-  choreBasedIncomeEnabled: boolean;
+  choreBasedIncomeEnabled?: boolean;
+  tithingEnabled?: boolean;
 }
 
 /** Standard API error shape */

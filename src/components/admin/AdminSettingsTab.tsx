@@ -9,14 +9,16 @@ interface Props {
   memberCount: number
   memberLimit: number
   choreBasedIncomeEnabled: boolean
+  tithingEnabled: boolean
   onDataChange: () => void | Promise<unknown>
   onMemberCreated?: () => void
 }
 
-export default function AdminSettingsTab({ familyId, members, memberCount, memberLimit, choreBasedIncomeEnabled, onDataChange, onMemberCreated }: Props) {
+export default function AdminSettingsTab({ familyId, members, memberCount, memberLimit, choreBasedIncomeEnabled, tithingEnabled, onDataChange, onMemberCreated }: Props) {
   const { apiFetch } = useApi()
   const [refreshing, setRefreshing] = useState(false)
   const [togglingChore, setTogglingChore] = useState(false)
+  const [togglingTithing, setTogglingTithing] = useState(false)
 
   async function handleRefresh() {
     setRefreshing(true)
@@ -35,6 +37,21 @@ export default function AdminSettingsTab({ familyId, members, memberCount, membe
       console.error('Failed to toggle chore-based income', err)
     } finally {
       setTogglingChore(false)
+    }
+  }
+
+  async function handleToggleTithing() {
+    setTogglingTithing(true)
+    try {
+      await apiFetch('family/settings', {
+        method: 'PATCH',
+        body: JSON.stringify({ tithingEnabled: !tithingEnabled }),
+      })
+      await onDataChange()
+    } catch (err) {
+      console.error('Failed to toggle tithing', err)
+    } finally {
+      setTogglingTithing(false)
     }
   }
 
@@ -65,6 +82,22 @@ export default function AdminSettingsTab({ familyId, members, memberCount, membe
             disabled={togglingChore}
             aria-pressed={choreBasedIncomeEnabled}
             aria-label="Toggle chore-based income"
+          >
+            <span className="toggle-switch__thumb" />
+          </button>
+        </div>
+
+        <div className="settings-card__row" style={{ borderTop: '1px solid var(--border)' }}>
+          <div>
+            <p className="settings-card__label">Tithing</p>
+            <p className="settings-card__hint">Show tithing owed, tithing transaction type, and tithing reminders throughout the app.</p>
+          </div>
+          <button
+            className={`toggle-switch${tithingEnabled ? ' toggle-switch--on' : ''}`}
+            onClick={handleToggleTithing}
+            disabled={togglingTithing}
+            aria-pressed={tithingEnabled}
+            aria-label="Toggle tithing"
           >
             <span className="toggle-switch__thumb" />
           </button>

@@ -2,6 +2,7 @@ import type { KidView } from '../../data/mockData'
 
 interface Props {
   kid: KidView
+  tithingEnabled: boolean
 }
 
 function formatDate(iso: string): string {
@@ -16,7 +17,7 @@ function formatMoney(amount: number): string {
   return `$${amount.toFixed(2)}`
 }
 
-export default function SummaryTab({ kid }: Props) {
+export default function SummaryTab({ kid, tithingEnabled }: Props) {
   return (
     <div className="summary-tab">
       <div className="summary-cards">
@@ -27,15 +28,17 @@ export default function SummaryTab({ kid }: Props) {
           </span>
         </div>
 
-        <div className="summary-card">
-          <span className="summary-card__label">Tithing Owed</span>
-          <span className={`summary-card__value ${kid.tithingOwed > 0 ? 'summary-card__value--warning' : 'summary-card__value--success'}`}>
-            {formatMoney(kid.tithingOwed)}
-          </span>
-          <span className="summary-card__sub">
-            Last paid: {kid.lastTithingPaid ? formatDate(kid.lastTithingPaid) : 'Never'}
-          </span>
-        </div>
+        {tithingEnabled && (
+          <div className="summary-card">
+            <span className="summary-card__label">Tithing Owed</span>
+            <span className={`summary-card__value ${kid.tithingOwed > 0 ? 'summary-card__value--warning' : 'summary-card__value--success'}`}>
+              {formatMoney(kid.tithingOwed)}
+            </span>
+            <span className="summary-card__sub">
+              Last paid: {kid.lastTithingPaid ? formatDate(kid.lastTithingPaid) : 'Never'}
+            </span>
+          </div>
+        )}
 
         <div className="summary-card">
           <span className="summary-card__label">Allowance</span>

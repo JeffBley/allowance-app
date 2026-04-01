@@ -5,6 +5,7 @@ import { useApi } from '../../hooks/useApi'
 interface Props {
   chores: Chore[]
   kids: KidView[]
+  tithingEnabled: boolean
   onChoresChange: () => void | Promise<unknown>
 }
 
@@ -109,11 +110,12 @@ function ChoreModal({ initial, onSave, onClose }: ChoreModalProps) {
 interface CompleteModalProps {
   chore: Chore
   kids: KidView[]
+  tithingEnabled: boolean
   onClose: () => void
   onComplete: () => void
 }
 
-function CompleteChoreModal({ chore, kids, onClose, onComplete }: CompleteModalProps) {
+function CompleteChoreModal({ chore, kids, tithingEnabled, onClose, onComplete }: CompleteModalProps) {
   const { apiFetch } = useApi()
   const [kidOid, setKidOid] = useState(kids[0]?.oid ?? '')
   const [tithable, setTithable] = useState(true)
@@ -140,7 +142,7 @@ function CompleteChoreModal({ chore, kids, onClose, onComplete }: CompleteModalP
           amount: chore.amount,
           notes: `Chore: ${chore.name}`,
           date: today,
-          tithable,
+          tithable: tithingEnabled && tithable,
         }),
       })
       // 2. Delete the chore only if it is NOT a template
@@ -175,7 +177,7 @@ function CompleteChoreModal({ chore, kids, onClose, onComplete }: CompleteModalP
               ))}
             </select>
           </label>
-          <label className="chore-form__checkbox-row">
+          <label className="chore-form__checkbox-row" style={!tithingEnabled ? { display: 'none' } : undefined}>
             <input
               type="checkbox"
               checked={tithable}
@@ -287,7 +289,7 @@ function ChoreRow({ chore, onComplete, onEdit, onDelete }: ChoreRowProps) {
 // ---------------------------------------------------------------------------
 // AdminChoresSection — main export
 // ---------------------------------------------------------------------------
-export default function AdminChoresSection({ chores, kids, onChoresChange }: Props) {
+export default function AdminChoresSection({ chores, kids, tithingEnabled, onChoresChange }: Props) {
   const { apiFetch } = useApi()
 
   type Modal =
@@ -368,6 +370,7 @@ export default function AdminChoresSection({ chores, kids, onChoresChange }: Pro
         <CompleteChoreModal
           chore={modal.chore}
           kids={kids}
+          tithingEnabled={tithingEnabled}
           onClose={() => setModal(null)}
           onComplete={async () => { setModal(null); await onChoresChange() }}
         />

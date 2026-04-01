@@ -4,6 +4,7 @@ import { useApi } from '../../hooks/useApi'
 
 interface Props {
   kid: KidView
+  tithingEnabled?: boolean
   onClose: () => void
 }
 
@@ -17,25 +18,35 @@ interface WizardState {
   notes: string
 }
 
-// Step layout per category:
+// Step layout per category (tithingEnabled = true):
 //   income:   0=category → 1=amount → 2=tithing? → 3=notes → 4=summary
 //   purchase: 0=category → 1=amount → 2=notes → 3=summary
 //   tithing:  0=category → 1=amount → 2=summary
+//
+// When tithingEnabled = false:
+//   income:   0=category → 1=amount → 2=notes → 3=summary  (tithing-question skipped)
+//   purchase: 0=category → 1=amount → 2=notes → 3=summary
+//   tithing category is removed from options entirely
 
-function getMaxStep(category: Category | null): number {
-  if (category === 'income')   return 4
+function getMaxStep(category: Category | null, tithingEnabled: boolean): number {
+  if (category === 'income')   return tithingEnabled ? 4 : 3
   if (category === 'purchase') return 3
   if (category === 'tithing')  return 2
   return 0
 }
 
-function getScreenName(step: number, category: Category | null): string {
+function getScreenName(step: number, category: Category | null, tithingEnabled: boolean): string {
   if (step === 0) return 'category'
   if (step === 1) return 'amount'
   if (category === 'income') {
-    if (step === 2) return 'tithing-question'
-    if (step === 3) return 'notes'
-    if (step === 4) return 'summary'
+    if (tithingEnabled) {
+      if (step === 2) return 'tithing-question'
+      if (step === 3) return 'notes'
+      if (step === 4) return 'summary'
+    } else {
+      if (step === 2) return 'notes'
+      if (step === 3) return 'summary'
+    }
   }
   if (category === 'purchase') {
     if (step === 2) return 'notes'
@@ -55,7 +66,7 @@ const CATEGORY_META: Record<Category, { icon: string; label: string; description
   tithing:  { icon: '⛪', label: 'Tithing',  description: 'Pay your tithing' },
 }
 
-export default function AddTransactionWizard({ kid, onClose }: Props) {
+export default function AddTransactionWizard({ kid, tithingEnabled = true, onClose }: Props) {
   const { apiFetch } = useApi()
   const [step, setStep] = useState(0)
   const [state, setState] = useState<WizardState>({
@@ -68,8 +79,8 @@ export default function AddTransactionWizard({ kid, onClose }: Props) {
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
-  const maxStep    = getMaxStep(state.category)
-  const screen     = getScreenName(step, state.category)
+  const maxStep    = getMaxStep(state.category, tithingEnabled)
+  const screen     = getScreenName(step, state.category, tithingEnabled)
   const hourlyOn    = kid.kidSettings?.hourlyWagesEnabled === true
   const wageRate    = kid.kidSettings?.hourlyWageRate ?? 10
   const hoursNum    = parseFloat(state.hours) || 0
@@ -82,7 +93,7 @@ export default function AddTransactionWizard({ kid, onClose }: Props) {
   const newTithingOwed =
     state.category === 'tithing'
       ? Math.max(0, kid.tithingOwed - amountNum)
-      : state.category === 'income' && state.shouldBeTithed
+      : state.category === 'income' && tithingEnabled && state.shouldBeTithed
         ? kid.tithingOwed + titheAmt
         : kid.tithingOwed
 
@@ -94,7 +105,7 @@ export default function AddTransactionWizard({ kid, onClose }: Props) {
   function canProceed(): boolean {
     if (step === 0) return state.category !== null
     if (step === 1) return amountNum > 0
-    if (step === 2 && state.category === 'income') return state.shouldBeTithed !== null
+    if (step === 2 && state.category === 'income' && tithingEnabled) return state.shouldBeTithed !== null
     return true
   }
 
@@ -115,7 +126,7 @@ export default function AddTransactionWizard({ kid, onClose }: Props) {
           amount:   amountNum,
           date:     new Date().toISOString().split('T')[0],
           notes:    state.notes.trim(),
-          ...(state.category === 'income' && { tithable: state.shouldBeTithed !== false }),
+          ...(state.category === 'income' && { tithable: tithingEnabled && state.shouldBeTithed !== false }),
         }),
       })
       onClose()
@@ -166,7 +177,9 @@ export default function AddTransactionWizard({ kid, onClose }: Props) {
             <div className="wizard-screen">
               <p className="wizard-screen__prompt">What type of transaction?</p>
               <div className="category-options">
-                {(Object.keys(CATEGORY_META) as Category[]).map(cat => (
+                {(Object.keys(CATEGORY_META) as Category[])
+                  .filter(cat => tithingEnabled || cat !== 'tithing')
+                  .map(cat => (
                   <button
                     key={cat}
                     className={`category-btn${state.category === cat ? ' category-btn--selected' : ''}`}
@@ -352,7 +365,7 @@ export default function AddTransactionWizard({ kid, onClose }: Props) {
                     {state.category === 'income' ? '+' : '−'}{fmt(amountNum)}
                   </span>
                 </div>
-                {state.category === 'income' && (
+                {state.category === 'income' && tithingEnabled && (
                   <div className="summary-row">
                     <span className="summary-row__label">Tithing Applies</span>
                     <span className="summary-row__value">
@@ -370,7 +383,7 @@ export default function AddTransactionWizard({ kid, onClose }: Props) {
                   <span className="summary-row__label">Money Available (after)</span>
                   <span className="summary-row__value">{fmt(newBalance)}</span>
                 </div>
-                {state.category === 'income' && state.shouldBeTithed && (
+                {state.category === 'income' && tithingEnabled && state.shouldBeTithed && (
                   <div className="summary-row">
                     <span className="summary-row__label">Tithing Owed (after)</span>
                     <span className="summary-row__value summary-row__value--warning">{fmt(newTithingOwed)}</span>

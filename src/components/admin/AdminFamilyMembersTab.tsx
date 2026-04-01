@@ -4,6 +4,7 @@ import { useApi } from '../../hooks/useApi'
 
 interface Props {
   kids: KidView[]
+  tithingEnabled: boolean
   onUnsavedStatusChange: (hasUnsaved: boolean) => void
   /** Called after settings are successfully saved so parent can re-fetch kidViews */
   onSettingsSaved: () => void
@@ -1293,7 +1294,7 @@ function needsBiweeklyStartDialog(edited: LocalSettings, saved: LocalSettings): 
   return saved.allowanceFrequency !== 'Bi-weekly' || edited.dayOfWeek !== saved.dayOfWeek
 }
 
-export default function AdminFamilyMembersTab({ kids, onUnsavedStatusChange, onSettingsSaved, onMemberCreated, familyId, memberCount, memberLimit }: Props) {
+export default function AdminFamilyMembersTab({ kids, tithingEnabled, onUnsavedStatusChange, onSettingsSaved, onMemberCreated, familyId, memberCount, memberLimit }: Props) {
   const [selectedId, setSelectedId]     = useState<string>(() => kids[0]?.oid ?? '')
   const [pendingKidId, setPendingKidId] = useState<string | null>(null)
 
@@ -1694,6 +1695,7 @@ export default function AdminFamilyMembersTab({ kids, onUnsavedStatusChange, onS
                       />
                     </div>
                   </div>
+                  {tithingEnabled && (
                   <div className="edit-balance-form__field">
                     <label className="form-label" htmlFor="edit-tithing">Tithing Owed</label>
                     <div className="amount-input-wrapper amount-input-wrapper--sm">
@@ -1709,6 +1711,7 @@ export default function AdminFamilyMembersTab({ kids, onUnsavedStatusChange, onS
                       />
                     </div>
                   </div>
+                  )}
                 </div>
                 {editBalanceError && (
                   <p className="sa-form-error" role="alert" style={{ marginBottom: 8 }}>{editBalanceError}</p>

@@ -2,16 +2,18 @@ import { useState } from 'react'
 import type { KidView } from '../../data/mockData'
 import SummaryTab from './SummaryTab'
 import TransactionsTab from './TransactionsTab'
+import AddTransactionWizard from './AddTransactionWizard'
 
 type TabId = 'summary' | 'transactions'
 
 interface Props {
   currentUserOid: string
   kidViews: KidView[]
+  tithingEnabled: boolean
   onDataChange?: () => void | Promise<unknown>
 }
 
-export default function UserApp({ currentUserOid, kidViews, onDataChange }: Props) {
+export default function UserApp({ currentUserOid, kidViews, tithingEnabled, onDataChange }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>('summary')
   const kid = kidViews.find(k => k.oid === currentUserOid)
 
@@ -51,7 +53,7 @@ export default function UserApp({ currentUserOid, kidViews, onDataChange }: Prop
 
       <main className="tab-content">
         {activeTab === 'summary' && (
-          <SummaryTab kid={kid} />
+          <SummaryTab kid={kid} tithingEnabled={tithingEnabled} />
         )}
         {activeTab === 'transactions' && (
           <TransactionsTab

@@ -28,8 +28,10 @@ async function updateFamilySettings(request: HttpRequest, context: InvocationCon
     return { status: 400, jsonBody: { code: 'INVALID_BODY', message: 'Request body must be valid JSON.' } };
   }
 
-  if (typeof body.choreBasedIncomeEnabled !== 'boolean') {
-    return { status: 400, jsonBody: { code: 'INVALID_FIELD', message: 'choreBasedIncomeEnabled must be a boolean.' } };
+  const hasChore   = typeof body.choreBasedIncomeEnabled === 'boolean';
+  const hasTithing = typeof body.tithingEnabled === 'boolean';
+  if (!hasChore && !hasTithing) {
+    return { status: 400, jsonBody: { code: 'INVALID_FIELD', message: 'Request must include choreBasedIncomeEnabled or tithingEnabled.' } };
   }
 
   try {
@@ -39,12 +41,19 @@ async function updateFamilySettings(request: HttpRequest, context: InvocationCon
       return { status: 404, jsonBody: { code: 'NOT_FOUND', message: 'Family document not found.' } };
     }
 
-    await familiesContainer.item(scope.familyId, scope.familyId).replace<Family>({
-      ...familyDoc,
-      choreBasedIncomeEnabled: body.choreBasedIncomeEnabled,
-    });
+    const updated: Family = { ...familyDoc };
+    if (hasChore)   updated.choreBasedIncomeEnabled = body.choreBasedIncomeEnabled;
+    if (hasTithing) updated.tithingEnabled = body.tithingEnabled;
 
-    return { status: 200, jsonBody: { choreBasedIncomeEnabled: body.choreBasedIncomeEnabled } };
+    await familiesContainer.item(scope.familyId, scope.familyId).replace<Family>(updated);
+
+    return {
+      status: 200,
+      jsonBody: {
+        choreBasedIncomeEnabled: updated.choreBasedIncomeEnabled ?? false,
+        tithingEnabled: updated.tithingEnabled ?? true,
+      },
+    };
   } catch (err) {
     context.error('updateFamilySettings error', err);
     return { status: 500, jsonBody: { code: 'INTERNAL_ERROR', message: 'Failed to update family settings.' } };

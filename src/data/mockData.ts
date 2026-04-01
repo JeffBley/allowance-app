@@ -61,6 +61,8 @@ export interface FamilyData {
   memberLimit: number
   /** When true, chore-based income feature is enabled for this family. */
   choreBasedIncomeEnabled: boolean
+  /** When false, all tithing UI and calculations are hidden. Defaults to true. */
+  tithingEnabled: boolean
   members: FamilyMember[]
 }
 

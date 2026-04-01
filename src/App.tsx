@@ -213,6 +213,7 @@ export default function App() {
           allTransactions={allTxns}
           auditLog={auditLog}
           chores={chores}
+          tithingEnabled={familyData.tithingEnabled}
           onDataChange={() => {
             // Refresh transactions, family data, audit log, and chores
             return Promise.all([
@@ -237,6 +238,7 @@ export default function App() {
         <UserApp
           currentUserOid={familyData.currentUserOid}
           kidViews={kidViews}
+          tithingEnabled={familyData.tithingEnabled}
           onDataChange={() => apiFetch<{ transactions: Transaction[] }>('transactions').then(r => setAllTxns(r.transactions))}
         />
       )}

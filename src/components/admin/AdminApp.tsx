@@ -22,12 +22,13 @@ interface Props {
   allTransactions: Transaction[]
   auditLog: AuditLogEntry[]
   chores: Chore[]
+  tithingEnabled: boolean
   onDataChange: () => void
   /** Silently re-fetches /api/family so newly joined members appear in kid list */
   onRefreshFamily: () => void
 }
 
-export default function AdminApp({ familyData, kidViews, allTransactions, auditLog, chores, onDataChange, onRefreshFamily }: Props) {
+export default function AdminApp({ familyData, kidViews, allTransactions, auditLog, chores, tithingEnabled, onDataChange, onRefreshFamily }: Props) {
   const [activeTab, setActiveTab]               = useState<AdminTab>('summary')
   const [pendingTab, setPendingTab]             = useState<AdminTab | null>(null)
   const [familyTabHasUnsaved, setFamilyTabHasUnsaved] = useState(false)
@@ -100,12 +101,14 @@ export default function AdminApp({ familyData, kidViews, allTransactions, auditL
             kids={kidViews}
             choreBasedIncomeEnabled={familyData.choreBasedIncomeEnabled}
             chores={chores}
+            tithingEnabled={tithingEnabled}
             onDataChange={onDataChange}
           />
         )}
         {activeTab === 'family-members' && (
           <AdminFamilyMembersTab
             kids={kidViews}
+            tithingEnabled={tithingEnabled}
             onUnsavedStatusChange={setFamilyTabHasUnsaved}
             onSettingsSaved={onRefreshFamily}
             onMemberCreated={onRefreshFamily}
@@ -127,6 +130,7 @@ export default function AdminApp({ familyData, kidViews, allTransactions, auditL
             memberCount={familyData.members.length}
             memberLimit={familyData.memberLimit}
             choreBasedIncomeEnabled={familyData.choreBasedIncomeEnabled}
+            tithingEnabled={tithingEnabled}
             onDataChange={onDataChange}
             onMemberCreated={onRefreshFamily}
           />
