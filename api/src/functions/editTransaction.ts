@@ -72,6 +72,7 @@ async function editTransaction(request: HttpRequest, context: InvocationContext)
       amount: existing.amount,
       notes: existing.notes,
       date: existing.date,
+      kidOid: existing.kidOid,
     };
 
     // Apply updates (only fields present in the request body)

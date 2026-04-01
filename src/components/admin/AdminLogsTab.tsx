@@ -49,7 +49,11 @@ function formatDateTime(iso: string): string {
 }
 
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
+  // Extract the YYYY-MM-DD portion and construct a LOCAL date to avoid the
+  // UTC-to-local conversion that shifts dates one day earlier in negative-
+  // offset timezones (e.g. "2026-04-01T00:00:00.000Z" → "Mar 31" in UTC-5).
+  const [year, month, day] = iso.slice(0, 10).split('-').map(Number)
+  return new Date(year, month - 1, day).toLocaleDateString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric',
   })
 }
@@ -350,7 +354,7 @@ export default function AdminLogsTab({ logs, kids, onDataChange }: Props) {
             if (entry.action === 'member_delete') {
               return <MemberDeleteRow key={entry.id} entry={entry} />
             }
-            const childName = kids.find(k => k.oid === entry.before?.kidOid)?.displayName ?? 'Unknown'
+            const childName = kids.find(k => k.oid === entry.subjectOid)?.displayName ?? 'Unknown'
             return entry.action === 'edit'
               ? <EditRow key={entry.id} entry={entry} childName={childName} />
               : <DeleteRow key={entry.id} entry={entry} childName={childName} />
