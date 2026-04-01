@@ -54,6 +54,10 @@ async function updateChore(request: HttpRequest, context: InvocationContext): Pr
       update.amount = Math.round(body.amount * 100) / 100;
     }
 
+    if (body.isTemplate !== undefined) {
+      update.isTemplate = body.isTemplate === true;
+    }
+
     await container.item(choreId, scope.familyId).replace(update);
 
     return { status: 200, jsonBody: { chore: update } };

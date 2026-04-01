@@ -70,6 +70,8 @@ export interface Chore {
   familyId: string
   name: string
   amount: number
+  /** When true, completing this chore does not delete it (recurring template). */
+  isTemplate?: boolean
   createdBy: string
   createdAt: string
 }

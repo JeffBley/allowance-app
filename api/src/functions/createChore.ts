@@ -50,6 +50,7 @@ async function createChore(request: HttpRequest, context: InvocationContext): Pr
       familyId: scope.familyId,
       name,
       amount: Math.round(body.amount * 100) / 100, // normalize to 2 decimal places
+      isTemplate: body.isTemplate === true,
       createdBy: auth.payload.oid,
       createdAt: now,
     };

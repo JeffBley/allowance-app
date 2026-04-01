@@ -17,13 +17,14 @@ function fmt(n: number): string {
 // ---------------------------------------------------------------------------
 interface ChoreModalProps {
   initial?: Chore
-  onSave: (name: string, amount: number) => Promise<void>
+  onSave: (name: string, amount: number, isTemplate: boolean) => Promise<void>
   onClose: () => void
 }
 
 function ChoreModal({ initial, onSave, onClose }: ChoreModalProps) {
   const [name, setName] = useState(initial?.name ?? '')
   const [amount, setAmount] = useState(initial ? String(initial.amount) : '')
+  const [isTemplate, setIsTemplate] = useState(initial?.isTemplate ?? false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const nameRef = useRef<HTMLInputElement>(null)
@@ -41,7 +42,7 @@ function ChoreModal({ initial, onSave, onClose }: ChoreModalProps) {
     setSaving(true)
     setError(null)
     try {
-      await onSave(trimmed, Math.round(amt * 100) / 100)
+      await onSave(trimmed, Math.round(amt * 100) / 100, isTemplate)
     } catch (err) {
       const body = (err as { body?: { message?: string } })?.body
       setError(body?.message ?? 'Failed to save chore.')
@@ -78,6 +79,14 @@ function ChoreModal({ initial, onSave, onClose }: ChoreModalProps) {
               onChange={e => setAmount(e.target.value)}
               placeholder="0.00"
             />
+          </label>
+          <label className="chore-form__checkbox-row">
+            <input
+              type="checkbox"
+              checked={isTemplate}
+              onChange={e => setIsTemplate(e.target.checked)}
+            />
+            Save as template (chore stays after completion)
           </label>
           {error && <p className="chore-form__error">{error}</p>}
           <div className="sa-dialog__actions">
@@ -134,8 +143,10 @@ function CompleteChoreModal({ chore, kids, onClose, onComplete }: CompleteModalP
           tithable,
         }),
       })
-      // 2. Delete the chore so it disappears from the list
-      await apiFetch(`chores/${chore.id}`, { method: 'DELETE' })
+      // 2. Delete the chore only if it is NOT a template
+      if (!chore.isTemplate) {
+        await apiFetch(`chores/${chore.id}`, { method: 'DELETE' })
+      }
       onComplete()
     } catch (err) {
       const body = (err as { body?: { message?: string } })?.body
@@ -227,6 +238,7 @@ function ChoreRow({ chore, onComplete, onEdit, onDelete }: ChoreRowProps) {
   return (
     <div className="chore-row">
       <span className="chore-row__name">{chore.name}</span>
+      {chore.isTemplate && <span className="chore-row__template-badge">Template</span>}
       <span className="chore-row__amount">{fmt(chore.amount)}</span>
       <div className="chore-row__menu-wrap" ref={menuRef}>
         <button
@@ -287,16 +299,16 @@ export default function AdminChoresSection({ chores, kids, onChoresChange }: Pro
   const [modal, setModal] = useState<Modal | null>(null)
   const [deleting, setDeleting] = useState(false)
 
-  async function handleSaveChore(name: string, amount: number) {
+  async function handleSaveChore(name: string, amount: number, isTemplate: boolean) {
     if (modal?.type === 'edit') {
       await apiFetch(`chores/${modal.chore.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ name, amount }),
+        body: JSON.stringify({ name, amount, isTemplate }),
       })
     } else {
       await apiFetch('chores', {
         method: 'POST',
-        body: JSON.stringify({ name, amount }),
+        body: JSON.stringify({ name, amount, isTemplate }),
       })
     }
     setModal(null)

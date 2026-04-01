@@ -36,6 +36,11 @@ export interface Chore extends CosmosDocument {
   name: string;
   /** Dollar value of the chore */
   amount: number;
+  /**
+   * When true, completing this chore does NOT delete it — it acts as a
+   * reusable template for recurring chores (e.g. "Mow the lawn" every week).
+   */
+  isTemplate?: boolean;
   /** oid of admin who created this chore */
   createdBy: string;
   createdAt: string; // ISO 8601
@@ -243,11 +248,13 @@ export interface PurgeTransactionsRequest {
 export interface CreateChoreRequest {
   name: string;
   amount: number;
+  isTemplate?: boolean;
 }
 
 export interface UpdateChoreRequest {
   name?: string;
   amount?: number;
+  isTemplate?: boolean;
 }
 
 export interface CompleteChoreRequest {
