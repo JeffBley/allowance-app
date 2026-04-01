@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import type { Kid, KidId } from '../../data/mockData'
+import type { KidView } from '../../data/mockData'
 import AddTransactionWizard from '../user/AddTransactionWizard'
 
 interface Props {
-  kids: Record<KidId, Kid>
+  kids: KidView[]
+  onDataChange: () => void | Promise<unknown>
 }
 
 function formatDate(iso: string): string {
@@ -13,26 +14,56 @@ function formatDate(iso: string): string {
   })
 }
 
+function formatNextAllowance(iso: string): string {
+  const [year, month, day] = iso.split('T')[0].split('-').map(Number)
+  const d = new Date(year, month - 1, day)
+  const monthName = d.toLocaleDateString('en-US', { month: 'long' })
+  const dayNum = d.getDate()
+  const suffix = dayNum === 1 || dayNum === 21 || dayNum === 31 ? 'st'
+               : dayNum === 2 || dayNum === 22 ? 'nd'
+               : dayNum === 3 || dayNum === 23 ? 'rd' : 'th'
+  return `${monthName} ${dayNum}${suffix}`
+}
+
 function formatMoney(amount: number): string {
   return `$${amount.toFixed(2)}`
 }
 
-export default function AdminSummaryTab({ kids }: Props) {
-  const kidList = Object.values(kids)
-  const [wizardKid, setWizardKid] = useState<Kid | null>(null)
+export default function AdminSummaryTab({ kids, onDataChange }: Props) {
+  const [wizardKid, setWizardKid] = useState<KidView | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+
+  async function handleRefresh() {
+    setRefreshing(true)
+    try {
+      await onDataChange()
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   return (
     <div className="admin-summary-tab">
-      <h2 className="section-title">Kids Overview</h2>
+      <div className="admin-summary-tab__header">
+        <h2 className="section-title">Kids Overview</h2>
+        <button
+          className="btn btn--secondary btn--sm"
+          onClick={handleRefresh}
+          disabled={refreshing}
+          aria-label="Refresh"
+        >
+          {refreshing ? '↻ Refreshing…' : '↻ Refresh'}
+        </button>
+      </div>
       <div className="admin-kid-tiles">
-        {kidList.map(kid => (
-          <div key={kid.id} className="admin-kid-tile">
+        {kids.map(kid => (
+          <div key={kid.oid} className="admin-kid-tile">
             <div className="admin-kid-tile__avatar">
-              {kid.name.charAt(0)}
+              {kid.displayName.charAt(0)}
             </div>
             <div className="admin-kid-tile__info">
               <div className="admin-kid-tile__name-row">
-                <h3 className="admin-kid-tile__name">{kid.name}</h3>
+                <h3 className="admin-kid-tile__name">{kid.displayName}</h3>
                 <button
                   className="btn btn--secondary btn--sm"
                   onClick={() => setWizardKid(kid)}
@@ -56,9 +87,17 @@ export default function AdminSummaryTab({ kids }: Props) {
                 <div className="admin-kid-stat">
                   <span className="admin-kid-stat__label">Last Tithing Paid</span>
                   <span className="admin-kid-stat__value admin-kid-stat__value--muted">
-                    {formatDate(kid.lastTithingPaid)}
+                    {kid.lastTithingPaid ? formatDate(kid.lastTithingPaid) : 'Never'}
                   </span>
                 </div>
+                {kid.kidSettings?.allowanceEnabled && kid.kidSettings.nextAllowanceDate && (
+                  <div className="admin-kid-stat">
+                    <span className="admin-kid-stat__label">Next Allowance</span>
+                    <span className="admin-kid-stat__value admin-kid-stat__value--muted">
+                      ${kid.kidSettings.allowanceAmount.toFixed(2)} on {formatNextAllowance(kid.kidSettings.nextAllowanceDate)}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -68,7 +107,7 @@ export default function AdminSummaryTab({ kids }: Props) {
       {wizardKid && (
         <AddTransactionWizard
           kid={wizardKid}
-          onClose={() => setWizardKid(null)}
+          onClose={() => { setWizardKid(null); onDataChange() }}
         />
       )}
     </div>

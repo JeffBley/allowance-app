@@ -2,7 +2,7 @@
   "name": "allowance-app-api",
   "version": "1.0.0",
   "description": "Azure Functions API for the Allowance App",
-  "main": "dist/src/functions/*.js",
+  "main": "dist/src/functions/**/*.js",
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
@@ -14,8 +14,10 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@azure/functions": "^4.5.0",
+    "@azure/communication-email": "^1.1.0",
     "@azure/cosmos": "^4.2.0",
+    "@azure/functions": "^4.5.0",
+    "@azure/identity": "^4.13.1",
     "jose": "^5.9.6"
   },
   "devDependencies": {

@@ -35,9 +35,9 @@ resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' = {
     consistencyPolicy: {
       defaultConsistencyLevel: 'Session'
     }
-    // Disable local (key-based) auth in favour of managed identity where possible.
-    // NOTE: Key-based auth is still needed for the connection string stored in Key Vault
-    // so we leave this enabled. Revisit when adopting RBAC-only access.
+    // disableLocalAuth: false — key-based auth is left enabled as a safe-migration
+    // fallback. Set to true (and re-run azd provision) once managed identity
+    // access is confirmed working in production to eliminate the account key entirely.
     disableLocalAuth: false
     publicNetworkAccess: 'Enabled'
     enableFreeTier: false
@@ -86,13 +86,36 @@ resource dbContainers 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/contai
   }
 ]
 
+// inviteCodes uses /id as partition key (codes are looked up by code value directly)
+resource inviteCodesContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-11-15' = {
+  parent: database
+  name: 'inviteCodes'
+  properties: {
+    resource: {
+      id: 'inviteCodes'
+      partitionKey: {
+        paths: ['/id']
+        kind: 'Hash'
+        // version omitted to match the existing container's original partition key definition
+      }
+      indexingPolicy: {
+        indexingMode: 'consistent'
+        automatic: true
+        includedPaths: [{ path: '/*' }]
+        excludedPaths: [{ path: '/"_etag"/?' }]
+      }
+      // TTL enabled — invite codes auto-expire from storage after 30 days
+      // (the expiresAt field provides the application-level expiry check)
+      defaultTtl: 2592000
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Outputs
 // ---------------------------------------------------------------------------
 
 output accountName string = cosmosAccount.name
 output endpoint string = cosmosAccount.properties.documentEndpoint
-
-// @secure() prevents the connection string from appearing in deployment logs
-@secure()
-output connectionString string = 'AccountEndpoint=${cosmosAccount.properties.documentEndpoint};AccountKey=${cosmosAccount.listKeys().primaryMasterKey}'
+// Note: connectionString output removed — Function App now uses managed identity.
+// The account key is no longer used and should not be distributed.

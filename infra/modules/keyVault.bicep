@@ -1,7 +1,8 @@
 // ---------------------------------------------------------------------------
-// Key Vault — Standard tier, RBAC-enabled, stores the Cosmos DB connection string
-// The Function App's managed identity will be granted Secrets User access
-// from the functionApp module (after the identity is created).
+// Key Vault — Standard tier, RBAC-enabled
+// Provisioned for future secrets (e.g., BOOTSTRAP_ADMIN_SECRET).
+// Cosmos DB connection string is no longer stored here — the Function App
+// authenticates to Cosmos via managed identity RBAC instead.
 // ---------------------------------------------------------------------------
 
 param location string
@@ -10,10 +11,6 @@ param tags object
 @minLength(3)
 @maxLength(24)
 param name string
-
-@secure()
-@description('Cosmos DB connection string to store as a secret.')
-param cosmosDbConnectionString string
 
 // ---------------------------------------------------------------------------
 // Key Vault
@@ -44,26 +41,8 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
 }
 
 // ---------------------------------------------------------------------------
-// Cosmos DB connection string secret
-// ---------------------------------------------------------------------------
-
-resource cosmosDbSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: keyVault
-  name: 'CosmosDbConnectionString'
-  properties: {
-    value: cosmosDbConnectionString
-    attributes: {
-      enabled: true
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Outputs
 // ---------------------------------------------------------------------------
 
 output name string = keyVault.name
 output uri string = keyVault.properties.vaultUri
-
-// Full secret URI used in Function App settings as a Key Vault reference
-output cosmosDbSecretUri string = '${keyVault.properties.vaultUri}secrets/${cosmosDbSecret.name}/'

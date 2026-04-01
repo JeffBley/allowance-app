@@ -13,10 +13,10 @@ import { randomUUID } from 'node:crypto';
 async function deleteTransaction(request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   context.log('deleteTransaction invoked');
 
-  const auth = await validateBearerToken(request);
+  const auth = await validateBearerToken(request, context);
   if (!auth) return UNAUTHORIZED;
 
-  const scope = await resolveFamilyScope(auth.payload.oid);
+  const scope = await resolveFamilyScope(auth.payload.oid, context);
   if (!scope) return NOT_ENROLLED;
   if (scope.role !== 'FamilyAdmin') return FORBIDDEN;
 
@@ -38,23 +38,33 @@ async function deleteTransaction(request: HttpRequest, context: InvocationContex
     // Delete the transaction
     await txnContainer.item(transactionId, scope.familyId).delete();
 
-    // Write audit log entry with full snapshot
-    const auditEntry: AuditLogEntry = {
-      id: randomUUID(),
-      familyId: scope.familyId,
-      action: 'delete',
-      performedBy: auth.payload.oid,
-      timestamp: new Date().toISOString(),
-      targetTransactionId: transactionId,
-      before: {
-        category: existing.category,
-        amount: existing.amount,
-        notes: existing.notes,
-        date: existing.date,
-        kidOid: existing.kidOid,
-      },
-    };
-    await getContainer('auditLog').items.create(auditEntry);
+    // Write audit log entry — non-fatal: the delete is the authoritative operation.
+    // Wrapping in its own catch prevents a failed log write from returning 500
+    // after the transaction has already been permanently removed.
+    try {
+      const performedByEmail = typeof auth.payload['email'] === 'string' ? auth.payload['email'] : undefined;
+
+      const auditEntry: AuditLogEntry = {
+        id: randomUUID(),
+        familyId: scope.familyId,
+        action: 'delete',
+        performedBy: auth.payload.oid,
+        performedByEmail,
+        timestamp: new Date().toISOString(),
+        subjectOid: existing.kidOid,
+        targetTransactionId: transactionId,
+        before: {
+          category: existing.category,
+          amount: existing.amount,
+          notes: existing.notes,
+          date: existing.date,
+          kidOid: existing.kidOid,
+        },
+      };
+      await getContainer('auditLog').items.create(auditEntry);
+    } catch (auditErr) {
+      context.warn(`deleteTransaction: audit log write failed for txn ${transactionId} — transaction was deleted successfully`, auditErr);
+    }
 
     return { status: 204 }; // No content — successful deletion
   } catch (err) {

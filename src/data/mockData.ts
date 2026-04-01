@@ -1,211 +1,162 @@
-export type KidId = 'jacob' | 'sarah' | 'kaitlyn'
+// ---------------------------------------------------------------------------
+// Frontend data types — aligned with the Azure Functions API models.
+// NO mock values — all data comes from /api/* endpoints.
+// ---------------------------------------------------------------------------
 
 export type AllowanceFrequency = 'Weekly' | 'Bi-weekly' | 'Monthly'
+export type TransactionCategory = 'Income' | 'Purchase' | 'Tithing'
+export type UserRole = 'User' | 'FamilyAdmin'
 
 export interface KidSettings {
   allowanceEnabled: boolean
   allowanceAmount: number
   allowanceFrequency: AllowanceFrequency
-  dayOfWeek: string   // e.g. 'Friday' — used for Weekly/Bi-weekly
-  timeOfDay: string   // e.g. '09:00'
-  timezone: string    // IANA, e.g. 'America/New_York'
+  /** 0 = Sunday … 6 = Saturday */
+  dayOfWeek?: number
+  timeOfDay?: string    // 'HH:MM' 24-hour
+  timezone: string      // IANA, e.g. 'America/Chicago'
+  biweeklyStartDate?: string
+  nextAllowanceDate?: string
+  /** When true, admin can record hours worked instead of a flat amount for income transactions */
+  hourlyWagesEnabled?: boolean
+  /** The per-hour rate in dollars, used when hourlyWagesEnabled is true */
+  hourlyWageRate?: number
+  // Balance override — manually set by admin; transactions after balanceOverrideAt are added on top
+  balanceOverride?: number
+  tithingOwedOverride?: number
+  balanceOverrideAt?: string
+  // Purge accumulators — rolling sum of contributions from purged transactions (post-override)
+  purgedBalanceDelta?: number
+  purgedTithingOwedDelta?: number
 }
 
 export interface Transaction {
   id: string
-  date: string // ISO date YYYY-MM-DD
-  type: 'deposit' | 'withdrawal'
-  amount: number
+  date: string                  // ISO 8601 datetime from API
+  category: TransactionCategory
+  amount: number                // always positive; category determines sign
   notes: string
-  tithingApplies: boolean | null // null for withdrawals
+  kidOid?: string               // present in admin/all-transactions views
+  createdBy?: string            // 'scheduler' | admin oid
+  /** Income only — true (or absent) means 10% counts toward Tithing Owed */
+  tithable?: boolean
 }
 
-export interface Kid {
-  id: KidId
-  name: string
+export interface FamilyMember {
+  oid: string
+  displayName: string
+  role: UserRole
+  kidSettings?: KidSettings
+  /** True for admin-created local accounts with no Entra sign-in */
+  isLocalAccount?: boolean
+}
+
+/** Response from GET /api/family */
+export interface FamilyData {
+  familyId: string
+  currentUserOid: string
+  currentUserRole: UserRole
+  /** Maximum members allowed in this family (default 10, adjustable by SuperAdmin). */
+  memberLimit: number
+  members: FamilyMember[]
+}
+
+/** Invite code shape from GET /api/invites and POST /api/invites */
+export interface FamilyInviteCode {
+  code: string
+  familyId: string
+  role: UserRole
+  displayNameHint: string | null
+  /** Set for link-invite codes that will merge with an existing local account on redemption */
+  localMemberOid?: string | null
+  createdAt: string
+  expiresAt: string
+  expired: boolean
+  used: boolean
+  usedAt: string | null
+}
+
+/** Computed/enriched view for a kid — built from FamilyMember + Transaction[] */
+export interface KidView extends FamilyMember {
   balance: number
   tithingOwed: number
-  lastTithingPaid: string
-  allowanceAmount: number
-  allowanceFrequency: string
-  nextAllowanceDate: string
+  lastTithingPaid: string | null
   transactions: Transaction[]
-  settings: KidSettings
 }
 
-// ── Audit log ──────────────────────────────────────────────
-
-export interface EditLogEntry {
+/** Audit log entry from GET /api/audit-log */
+export interface AuditLogEntry {
   id: string
-  action: 'edit'
-  timestamp: string       // ISO datetime
-  childId: KidId
-  childName: string
-  transactionId: string
-  before: Transaction
-  after: Transaction
-  performedBy: string     // 'admin' or kid name
+  familyId: string
+  action: 'edit' | 'delete' | 'member_delete'
+  performedBy: string         // oid of admin who acted
+  performedByName?: string
+  /** Actual email of the admin — preferred over name/oid for display */
+  performedByEmail?: string
+  timestamp: string           // ISO 8601
+  /** Kid this entry relates to — populated server-side, used for Cosmos-side filtering */
+  subjectOid?: string
+  // Present for 'edit' and 'delete' actions
+  targetTransactionId?: string
+  before?: Partial<Transaction> & { kidOid?: string }
+  after?: Partial<Transaction>
+  // Present for 'member_delete' action
+  memberOid?: string
+  memberDisplayName?: string
+  lastBalance?: number
+  lastTithingOwed?: number
+  transactionCount?: number
 }
 
-export interface DeleteLogEntry {
-  id: string
-  action: 'delete'
-  timestamp: string
-  childId: KidId
-  childName: string
-  transaction: Transaction
-  performedBy: string
+// ---------------------------------------------------------------------------
+// Helper: compute derived fields for a kid from their transactions
+// ---------------------------------------------------------------------------
+
+export function computeKidView(member: FamilyMember, allTransactions: Transaction[]): KidView {
+  const txns = allTransactions.filter(t => t.kidOid === member.oid)
+  const ks = member.kidSettings
+
+  // Compute balance relative to the override floor.
+  // If balanceOverrideAt is set, only transactions on or after the override date
+  // are summed on top of the override amount.
+  // Transaction dates are YYYY-MM-DD; overrideAt is a full ISO datetime —
+  // we truncate to date-only before comparing so same-day transactions are included.
+  const overrideAt = ks?.balanceOverrideAt
+  const overrideDate = overrideAt ? overrideAt.slice(0, 10) : null
+  const txnsForBalance = overrideDate ? txns.filter(t => t.date.slice(0, 10) >= overrideDate) : txns
+
+  // purgedBalanceDelta accumulates contributions from transactions that have been deleted
+  // from the database but whose financial impact must still be counted.
+  // Accumulate in integer cents to prevent floating-point drift across many transactions.
+  const balanceCents =
+    Math.round((ks?.balanceOverride     ?? 0) * 100) +
+    Math.round((ks?.purgedBalanceDelta  ?? 0) * 100) +
+    txnsForBalance.reduce(
+      (sum, t) => sum + Math.round(t.amount * 100) * (t.category === 'Income' ? 1 : -1),
+      0,
+    );
+  const balance = balanceCents / 100;
+
+  const tithingOwed = (() => {
+    const tixns = overrideDate ? txns.filter(t => t.date.slice(0, 10) >= overrideDate) : txns
+    // Accumulate in integer cents to prevent floating-point drift
+    const tithableIncomeCents = tixns
+      .filter(t => t.category === 'Income' && t.tithable !== false)
+      .reduce((s, t) => s + Math.round(t.amount * 100), 0)
+    const paidCents = tixns.filter(t => t.category === 'Tithing').reduce((s, t) => s + Math.round(t.amount * 100), 0)
+    // 10% of tithable income minus payments, all in cents, then floor at 0
+    const owedCents =
+      Math.round((ks?.tithingOwedOverride     ?? 0) * 100) +
+      Math.round((ks?.purgedTithingOwedDelta  ?? 0) * 100) +
+      Math.round(tithableIncomeCents * 0.1) -
+      paidCents
+    return Math.max(0, owedCents) / 100
+  })()
+
+  const lastTithingPaid = txns
+    .filter(t => t.category === 'Tithing')
+    .sort((a, b) => b.date.localeCompare(a.date))[0]?.date ?? null
+
+  return { ...member, balance, tithingOwed, lastTithingPaid, transactions: txns }
 }
 
-export type LogEntry = EditLogEntry | DeleteLogEntry
-
-export const auditLog: LogEntry[] = [
-  {
-    id: 'log1',
-    action: 'edit',
-    timestamp: '2026-03-28T14:32:00',
-    childId: 'jacob',
-    childName: 'Jacob',
-    transactionId: 'j2',
-    performedBy: 'admin',
-    before: { id: 'j2', date: '2026-03-01', type: 'withdrawal', amount: 10.00, notes: 'Pizza', tithingApplies: null },
-    after:  { id: 'j2', date: '2026-03-01', type: 'withdrawal', amount: 12.50, notes: 'Pizza with friends', tithingApplies: null },
-  },
-  {
-    id: 'log2',
-    action: 'delete',
-    timestamp: '2026-03-25T09:15:00',
-    childId: 'sarah',
-    childName: 'Sarah',
-    performedBy: 'admin',
-    transaction: { id: 's5', date: '2026-02-10', type: 'withdrawal', amount: 3.50, notes: 'Ice cream', tithingApplies: null },
-  },
-  {
-    id: 'log3',
-    action: 'edit',
-    timestamp: '2026-03-20T16:05:00',
-    childId: 'kaitlyn',
-    childName: 'Kaitlyn',
-    transactionId: 'k3',
-    performedBy: 'admin',
-    before: { id: 'k3', date: '2026-03-08', type: 'withdrawal', amount: 5.00, notes: 'Candy', tithingApplies: null },
-    after:  { id: 'k3', date: '2026-03-08', type: 'withdrawal', amount: 5.00, notes: 'Candy at the store', tithingApplies: null },
-  },
-  {
-    id: 'log4',
-    action: 'delete',
-    timestamp: '2026-02-18T11:44:00',
-    childId: 'jacob',
-    childName: 'Jacob',
-    performedBy: 'admin',
-    transaction: { id: 'j-old1', date: '2026-02-15', type: 'deposit', amount: 5.00, notes: 'Duplicate entry', tithingApplies: false },
-  },
-  {
-    id: 'log5',
-    action: 'edit',
-    timestamp: '2026-02-10T08:20:00',
-    childId: 'sarah',
-    childName: 'Sarah',
-    transactionId: 's3',
-    performedBy: 'admin',
-    before: { id: 's3', date: '2026-03-05', type: 'deposit', amount: 12.00, notes: 'Babysitting', tithingApplies: true },
-    after:  { id: 's3', date: '2026-03-05', type: 'deposit', amount: 15.00, notes: 'Babysitting for the Johnsons', tithingApplies: true },
-  },
-]
-
-const jacobTransactions: Transaction[] = [
-  { id: 'j1',  date: '2026-03-15', type: 'deposit',    amount: 20.00, notes: 'Mowed lawns',                            tithingApplies: true  },
-  { id: 'j2',  date: '2026-03-01', type: 'withdrawal', amount: 12.50, notes: 'Pizza with friends',                     tithingApplies: null  },
-  { id: 'j3',  date: '2026-02-22', type: 'deposit',    amount: 10.00, notes: 'Allowance',                              tithingApplies: false },
-  { id: 'j4',  date: '2026-02-14', type: 'deposit',    amount: 25.00, notes: "Valentine's birthday money from Grandma", tithingApplies: true  },
-  { id: 'j5',  date: '2026-02-08', type: 'withdrawal', amount: 8.00,  notes: 'Movie ticket',                           tithingApplies: null  },
-  { id: 'j6',  date: '2026-02-01', type: 'deposit',    amount: 10.00, notes: 'Allowance',                              tithingApplies: false },
-  { id: 'j7',  date: '2026-01-25', type: 'withdrawal', amount: 5.50,  notes: 'Tithing payment',                        tithingApplies: null  },
-  { id: 'j8',  date: '2026-01-20', type: 'withdrawal', amount: 15.00, notes: 'Video game',                             tithingApplies: null  },
-  { id: 'j9',  date: '2026-01-15', type: 'deposit',    amount: 10.00, notes: 'Allowance',                              tithingApplies: false },
-  { id: 'j10', date: '2026-01-10', type: 'deposit',    amount: 30.00, notes: 'Christmas money',                        tithingApplies: true  },
-  { id: 'j11', date: '2026-01-01', type: 'deposit',    amount: 10.00, notes: 'Allowance',                              tithingApplies: false },
-  { id: 'j12', date: '2025-12-25', type: 'deposit',    amount: 20.00, notes: 'Christmas gift from Aunt Sue',           tithingApplies: true  },
-]
-
-const sarahTransactions: Transaction[] = [
-  { id: 's1', date: '2026-03-20', type: 'deposit',    amount: 5.00,  notes: 'Allowance',                         tithingApplies: false },
-  { id: 's2', date: '2026-03-10', type: 'withdrawal', amount: 6.25,  notes: 'Craft supplies',                    tithingApplies: null  },
-  { id: 's3', date: '2026-03-05', type: 'deposit',    amount: 15.00, notes: 'Babysitting for the Johnsons',      tithingApplies: true  },
-  { id: 's4', date: '2026-02-20', type: 'deposit',    amount: 5.00,  notes: 'Allowance',                         tithingApplies: false },
-  { id: 's5', date: '2026-02-10', type: 'withdrawal', amount: 3.50,  notes: 'Ice cream',                         tithingApplies: null  },
-  { id: 's6', date: '2026-01-20', type: 'deposit',    amount: 5.00,  notes: 'Allowance',                         tithingApplies: false },
-  { id: 's7', date: '2026-01-15', type: 'withdrawal', amount: 2.50,  notes: 'Tithing payment',                   tithingApplies: null  },
-  { id: 's8', date: '2026-01-10', type: 'deposit',    amount: 20.00, notes: 'Christmas money',                   tithingApplies: true  },
-]
-
-const kaitlynTransactions: Transaction[] = [
-  { id: 'k1', date: '2026-03-22', type: 'deposit',    amount: 8.00,  notes: 'Allowance',                         tithingApplies: false },
-  { id: 'k2', date: '2026-03-15', type: 'deposit',    amount: 20.00, notes: 'Birthday money from Grandpa',       tithingApplies: true  },
-  { id: 'k3', date: '2026-03-08', type: 'withdrawal', amount: 5.00,  notes: 'Candy at the store',                tithingApplies: null  },
-  { id: 'k4', date: '2026-02-22', type: 'deposit',    amount: 8.00,  notes: 'Allowance',                         tithingApplies: false },
-  { id: 'k5', date: '2026-02-10', type: 'withdrawal', amount: 4.00,  notes: 'Stickers and notebook',             tithingApplies: null  },
-  { id: 'k6', date: '2026-01-22', type: 'deposit',    amount: 8.00,  notes: 'Allowance',                         tithingApplies: false },
-  { id: 'k7', date: '2026-01-12', type: 'withdrawal', amount: 4.00,  notes: 'Tithing payment',                   tithingApplies: null  },
-  { id: 'k8', date: '2026-01-05', type: 'deposit',    amount: 25.00, notes: 'Christmas money',                   tithingApplies: true  },
-]
-
-export const kidsData: Record<KidId, Kid> = {
-  jacob: {
-    id: 'jacob',
-    name: 'Jacob',
-    balance: 47.50,
-    tithingOwed: 12.00,
-    lastTithingPaid: '2026-01-25',
-    allowanceAmount: 10.00,
-    allowanceFrequency: 'Monthly',
-    nextAllowanceDate: '2026-04-01',
-    transactions: jacobTransactions,
-    settings: {
-      allowanceEnabled: true,
-      allowanceAmount: 10,
-      allowanceFrequency: 'Monthly',
-      dayOfWeek: 'Friday',
-      timeOfDay: '09:00',
-      timezone: 'America/New_York',
-    },
-  },
-  sarah: {
-    id: 'sarah',
-    name: 'Sarah',
-    balance: 23.75,
-    tithingOwed: 5.50,
-    lastTithingPaid: '2026-01-15',
-    allowanceAmount: 5.00,
-    allowanceFrequency: 'Monthly',
-    nextAllowanceDate: '2026-04-20',
-    transactions: sarahTransactions,
-    settings: {
-      allowanceEnabled: true,
-      allowanceAmount: 5,
-      allowanceFrequency: 'Monthly',
-      dayOfWeek: 'Friday',
-      timeOfDay: '09:00',
-      timezone: 'America/New_York',
-    },
-  },
-  kaitlyn: {
-    id: 'kaitlyn',
-    name: 'Kaitlyn',
-    balance: 31.00,
-    tithingOwed: 8.00,
-    lastTithingPaid: '2026-01-12',
-    allowanceAmount: 8.00,
-    allowanceFrequency: 'Monthly',
-    nextAllowanceDate: '2026-04-22',
-    transactions: kaitlynTransactions,
-    settings: {
-      allowanceEnabled: true,
-      allowanceAmount: 8,
-      allowanceFrequency: 'Monthly',
-      dayOfWeek: 'Friday',
-      timeOfDay: '09:00',
-      timezone: 'America/New_York',
-    },
-  },
-}

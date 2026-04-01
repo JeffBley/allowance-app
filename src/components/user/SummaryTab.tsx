@@ -1,13 +1,15 @@
-import type { Kid } from '../../data/mockData'
+import type { KidView } from '../../data/mockData'
 
 interface Props {
-  kid: Kid
+  kid: KidView
 }
 
 function formatDate(iso: string): string {
-  const [year, month, day] = iso.split('-').map(Number)
-  const date = new Date(year, month - 1, day)
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  // nextAllowanceDate is a full ISO 8601 datetime (e.g. "2026-04-04T08:00:00.000Z").
+  // Pass it directly to Date rather than splitting on '-', which breaks on the time part.
+  const date = new Date(iso)
+  if (isNaN(date.getTime())) return '—'
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
 }
 
 function formatMoney(amount: number): string {
@@ -31,17 +33,17 @@ export default function SummaryTab({ kid }: Props) {
             {formatMoney(kid.tithingOwed)}
           </span>
           <span className="summary-card__sub">
-            Last paid: {formatDate(kid.lastTithingPaid)}
+            Last paid: {kid.lastTithingPaid ? formatDate(kid.lastTithingPaid) : 'Never'}
           </span>
         </div>
 
         <div className="summary-card">
           <span className="summary-card__label">Allowance</span>
           <span className="summary-card__value">
-            {formatMoney(kid.allowanceAmount)}<span className="summary-card__freq"> / {kid.allowanceFrequency}</span>
+            {formatMoney(kid.kidSettings?.allowanceAmount ?? 0)}<span className="summary-card__freq"> / {kid.kidSettings?.allowanceFrequency ?? '—'}</span>
           </span>
           <span className="summary-card__sub">
-            Next: {formatDate(kid.nextAllowanceDate)}
+            {kid.kidSettings?.nextAllowanceDate ? `Next: ${formatDate(kid.kidSettings.nextAllowanceDate)}` : 'Not scheduled'}
           </span>
         </div>
       </div>

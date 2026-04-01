@@ -8,9 +8,27 @@ import { randomUUID } from 'node:crypto';
 // Finds all kids whose nextAllowanceDate has passed and credits their allowance.
 //
 // Security: This is a server-side timer trigger — no inbound HTTP, no auth needed.
-// Idempotency: Before inserting, checks for a recent transaction from the scheduler
-// to avoid double-crediting on restart/re-execution edge cases.
+//
+// Concurrency / distributed-lock strategy (Flex Consumption multi-instance):
+//   Step 1 — Claim: ETag-conditioned replace advances nextAllowanceDate BEFORE
+//            creating the transaction. Only one instance wins per user per cycle;
+//            concurrent instances get a 412 and skip.
+//   Step 2 — Create: Transaction is inserted after the claim succeeds.
+//   Step 3 — Idempotency check: Still present as a recovery guard in case a
+//            process crashes after the claim but before the transaction write.
+//            On the next scheduler run the date has already advanced, so no crash
+//            recovery is needed — but the check protects against any edge case
+//            where the same date window is processed twice.
 // ---------------------------------------------------------------------------
+
+/** Returns true when err is a Cosmos 412 Precondition Failed (ETag mismatch). */
+function isETagConflict(err: unknown): boolean {
+  if (err != null && typeof err === 'object') {
+    const obj = err as Record<string, unknown>;
+    return obj['code'] === 412 || obj['statusCode'] === 412;
+  }
+  return false;
+}
 
 async function allowanceScheduler(_timer: Timer, context: InvocationContext): Promise<void> {
   const now = new Date();
@@ -38,9 +56,52 @@ async function allowanceScheduler(_timer: Timer, context: InvocationContext): Pr
       if (!user.kidSettings) continue;
 
       const ks = user.kidSettings;
-      const nextDate = new Date(ks.nextAllowanceDate!);
 
-      // Idempotency check: look for a scheduler-created transaction within a 10-minute window
+      // Defensive guard: allowanceAmount must be a valid positive number.
+      // The API validates this on write, but direct DB edits could introduce bad data.
+      if (typeof ks.allowanceAmount !== 'number' || !isFinite(ks.allowanceAmount) || ks.allowanceAmount <= 0) {
+        context.warn(`[allowanceScheduler] Skipping ${user.displayName} — invalid allowanceAmount: ${ks.allowanceAmount}`);
+        continue;
+      }
+
+      const nextDate = new Date(ks.nextAllowanceDate!);
+      const nextAllowanceDate = computeNextDate(ks.nextAllowanceDate!, ks);
+
+      // ── Step 1: Claim this cycle atomically via ETag-conditioned replace ──────
+      // Advance nextAllowanceDate BEFORE creating the transaction. If two instances
+      // race here, only one wins; the other gets a 412 and skips. This eliminates
+      // the read-modify-write race on nextAllowanceDate (KI-0022).
+      const etag = (user as User & { _etag: string })._etag;
+      const claimedUser: User = {
+        ...user,
+        kidSettings: {
+          ...ks,
+          nextAllowanceDate: nextAllowanceDate.toISOString(),
+        },
+        updatedAt: now.toISOString(),
+      };
+
+      try {
+        await usersContainer.item(user.id, user.familyId).replace(
+          claimedUser,
+          { accessCondition: { type: 'IfMatch', condition: etag } },
+        );
+      } catch (claimErr) {
+        if (isETagConflict(claimErr)) {
+          // Another instance already claimed this cycle — skip.
+          context.log(`[allowanceScheduler] Skipping ${user.displayName} — cycle already claimed by another instance.`);
+          continue;
+        }
+        // Unexpected error — log and skip this user rather than crashing the whole run.
+        context.error(`[allowanceScheduler] Failed to claim cycle for ${user.displayName}:`, claimErr);
+        continue;
+      }
+
+      context.log(`[allowanceScheduler] Claimed cycle for ${user.displayName}. Next allowance: ${nextAllowanceDate.toISOString()}`);
+
+      // ── Step 2: Idempotency check (recovery guard) ────────────────────────────
+      // If a previous run crashed after the claim but before the transaction write,
+      // this window check prevents double-crediting on the re-run.
       const windowStart = new Date(nextDate.getTime() - 10 * 60 * 1000).toISOString();
       const windowEnd = new Date(nextDate.getTime() + 10 * 60 * 1000).toISOString();
 
@@ -62,11 +123,11 @@ async function allowanceScheduler(_timer: Timer, context: InvocationContext): Pr
         .fetchAll();
 
       if (existing.length > 0) {
-        context.log(`[allowanceScheduler] Skipping ${user.displayName} — transaction already exists in window.`);
+        context.log(`[allowanceScheduler] Skipping ${user.displayName} — transaction already exists in window (crash recovery).`);
         continue;
       }
 
-      // Create the allowance transaction
+      // ── Step 3: Create the allowance transaction ──────────────────────────────
       const transaction: Transaction = {
         id: randomUUID(),
         familyId: user.familyId,
@@ -75,28 +136,13 @@ async function allowanceScheduler(_timer: Timer, context: InvocationContext): Pr
         amount: ks.allowanceAmount,
         notes: 'Automatic allowance',
         date: nextDate.toISOString(),
+        tithable: true,  // automatic allowance is always tithable
         createdBy: 'scheduler',
         createdAt: now.toISOString(),
       };
 
       await txnContainer.items.create(transaction);
       context.log(`[allowanceScheduler] Credited $${ks.allowanceAmount} to ${user.displayName}.`);
-
-      // Compute next allowance date
-      const nextAllowanceDate = computeNextDate(ks.nextAllowanceDate!, ks);
-
-      // Update user's nextAllowanceDate
-      const updatedUser: User = {
-        ...user,
-        kidSettings: {
-          ...ks,
-          nextAllowanceDate: nextAllowanceDate.toISOString(),
-        },
-        updatedAt: now.toISOString(),
-      };
-
-      await usersContainer.item(user.id, user.familyId).replace(updatedUser);
-      context.log(`[allowanceScheduler] Next allowance for ${user.displayName}: ${nextAllowanceDate.toISOString()}`);
     }
   } catch (err) {
     context.error('[allowanceScheduler] Unhandled error:', err);

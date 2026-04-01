@@ -1,5 +1,6 @@
 import { getContainer } from '../data/cosmosClient.js';
 import type { User, UserRole } from '../data/models.js';
+import type { InvocationContext } from '@azure/functions';
 
 // ---------------------------------------------------------------------------
 // Family scope resolution — maps oid → { familyId, role, user }
@@ -21,7 +22,7 @@ export interface FamilyScope {
  *
  * Security: uses the oid from the *validated* JWT payload — never from client input.
  */
-export async function resolveFamilyScope(oid: string): Promise<FamilyScope | null> {
+export async function resolveFamilyScope(oid: string, context?: InvocationContext): Promise<FamilyScope | null> {
   try {
     // oid is also the document id in the users container.
     // We need to query (not point-read) because we don't know the familyId (partition key) yet.
@@ -42,7 +43,7 @@ export async function resolveFamilyScope(oid: string): Promise<FamilyScope | nul
     if (resources.length > 1) {
       // Should not happen — each oid is enrolled in exactly one family.
       // Log and use the first result defensively.
-      console.warn(`[familyScope] oid ${oid} found in ${resources.length} family records; using first.`);
+      (context ?? console).warn(`[familyScope] oid ${oid} found in ${resources.length} family records; using first.`);
     }
 
     const user = resources[0];
@@ -53,7 +54,7 @@ export async function resolveFamilyScope(oid: string): Promise<FamilyScope | nul
     };
   } catch (err) {
     const errMessage = err instanceof Error ? err.message : String(err);
-    console.error(`[familyScope] Failed to resolve family for oid ${oid}: ${errMessage}`);
+    (context ?? console).error(`[familyScope] Failed to resolve family for oid ${oid}: ${errMessage}`);
     throw err; // Re-throw — caller handles as 500
   }
 }

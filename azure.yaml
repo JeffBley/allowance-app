@@ -9,6 +9,58 @@ infra:
   path: infra
   module: main
 
+hooks:
+  # After provisioning, patch the Function App app settings with ACS Email
+  # endpoint and sender address (these come from an ACS module that is deployed
+  # AFTER the Function App, so they cannot be set in the same Bicep resource).
+  postprovision:
+    shell: pwsh
+    run: |
+      $azdEnvDir = Join-Path (Get-Location) ".azure"
+      $configFile = Join-Path $azdEnvDir "config.json"
+      $defaultEnv = (Get-Content $configFile | ConvertFrom-Json).defaultEnvironment
+      $envFile = Join-Path $azdEnvDir $defaultEnv ".env"
+      if (Test-Path $envFile) {
+        $vars = Get-Content $envFile | Where-Object { $_ -match '^(ACS_ENDPOINT|ACS_SENDER_ADDRESS|AZURE_FUNCTION_APP_NAME|AZURE_RESOURCE_GROUP)=' } |
+                ForEach-Object { $_ -replace '"', '' } |
+                ForEach-Object {
+                  $parts = $_ -split '=', 2
+                  [PSCustomObject]@{ Key = $parts[0]; Value = $parts[1] }
+                }
+        $settings = @{}
+        foreach ($v in $vars) { $settings[$v.Key] = $v.Value }
+        $funcName = $settings['AZURE_FUNCTION_APP_NAME']
+        $rg       = $settings['AZURE_RESOURCE_GROUP']
+        $acsEp    = $settings['ACS_ENDPOINT']
+        $acsSend  = $settings['ACS_SENDER_ADDRESS']
+        if ($funcName -and $rg -and $acsEp -and $acsSend) {
+          Write-Host "Patching Function App '$funcName' with ACS settings..."
+          az functionapp config appsettings set `
+            --name $funcName `
+            --resource-group $rg `
+            --settings "ACS_ENDPOINT=$acsEp" "ACS_SENDER_ADDRESS=$acsSend" `
+            --output none
+          Write-Host "ACS settings applied."
+        } else {
+          Write-Warning "ACS outputs not found in .env — skipping Function App ACS settings patch."
+        }
+      }
+    interactive: false
+
+  # After the full deployment completes, delete the .env file that was written
+  # by the web service's prepackage hook. The file contains VITE_* build-time
+  # variables that are embedded in the JS bundle anyway, but keeping it on disk
+  # unnecessarily risks accidental commit or exposure. AZD regenerates it on
+  # the next `azd deploy web` run.
+  postdeploy:
+    shell: pwsh
+    run: |
+      if (Test-Path ".env") {
+        Remove-Item ".env" -Force
+        Write-Host "Deleted .env build artifact."
+      }
+    interactive: false
+
 services:
   # React SPA — hosted on Azure Static Web Apps (Free tier)
   web:
@@ -18,7 +70,24 @@ services:
     hooks:
       prepackage:
         shell: pwsh
-        run: npm run build
+        run: |
+          # Vite needs VITE_* vars in a .env file at build time.
+          # azd stores them in .azure/<env>/.env — find the default env and copy
+          # the VITE_ lines into the project root .env before building.
+          # The working directory is always the project root when azd runs this hook.
+          $azdEnvDir = Join-Path (Get-Location) ".azure"
+          $configFile = Join-Path $azdEnvDir "config.json"
+          $defaultEnv = (Get-Content $configFile | ConvertFrom-Json).defaultEnvironment
+          $envFile = Join-Path $azdEnvDir $defaultEnv ".env"
+          if (Test-Path $envFile) {
+            $viteLines = Get-Content $envFile | Where-Object { $_ -match '^VITE_' } |
+                         ForEach-Object { $_ -replace '"', '' }
+            $viteLines | Set-Content -Path ".env" -Encoding UTF8
+            Write-Host "Wrote .env with $($viteLines.Count) VITE_ var(s)"
+          } else {
+            Write-Warning "azd env file not found at $envFile — building without VITE_ vars"
+          }
+          npm run build
         interactive: false
 
   # Azure Functions API — Consumption plan, TypeScript

@@ -13,10 +13,10 @@ import { randomUUID } from 'node:crypto';
 async function editTransaction(request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   context.log('editTransaction invoked');
 
-  const auth = await validateBearerToken(request);
+  const auth = await validateBearerToken(request, context);
   if (!auth) return UNAUTHORIZED;
 
-  const scope = await resolveFamilyScope(auth.payload.oid);
+  const scope = await resolveFamilyScope(auth.payload.oid, context);
   if (!scope) return NOT_ENROLLED;
   if (scope.role !== 'FamilyAdmin') return FORBIDDEN;
 
@@ -33,8 +33,13 @@ async function editTransaction(request: HttpRequest, context: InvocationContext)
   }
 
   // Validate amount if provided
-  if (body.amount != null && (typeof body.amount !== 'number' || isNaN(body.amount) || body.amount <= 0)) {
-    return { status: 400, jsonBody: { code: 'INVALID_AMOUNT', message: 'amount must be a positive number.' } };
+  if (body.amount != null && (typeof body.amount !== 'number' || isNaN(body.amount) || body.amount <= 0 || body.amount > 100000)) {
+    return { status: 400, jsonBody: { code: 'INVALID_AMOUNT', message: 'amount must be a positive number no greater than 100,000.' } };
+  }
+
+  // Validate notes length if provided
+  if (body.notes != null && body.notes.length > 500) {
+    return { status: 400, jsonBody: { code: 'INVALID_NOTES', message: 'notes must be 500 characters or fewer.' } };
   }
 
   // Validate category if provided
@@ -67,6 +72,10 @@ async function editTransaction(request: HttpRequest, context: InvocationContext)
       ...(body.amount != null && { amount: body.amount }),
       ...(body.notes != null && { notes: body.notes }),
       ...(body.date && { date: body.date }),
+      // tithable only applies to Income; preserve existing value when not in body
+      ...(body.category === 'Income' || (!body.category && existing.category === 'Income')
+        ? { tithable: body.tithable !== undefined ? body.tithable : existing.tithable }
+        : { tithable: undefined }),
     };
 
     // Snapshot after
@@ -80,18 +89,28 @@ async function editTransaction(request: HttpRequest, context: InvocationContext)
     // Persist the updated transaction
     const { resource: savedTxn } = await txnContainer.item(transactionId, scope.familyId).replace(updated);
 
-    // Write audit log entry
-    const auditEntry: AuditLogEntry = {
-      id: randomUUID(),
-      familyId: scope.familyId,
-      action: 'edit',
-      performedBy: auth.payload.oid,
-      timestamp: new Date().toISOString(),
-      targetTransactionId: transactionId,
-      before,
-      after,
-    };
-    await getContainer('auditLog').items.create(auditEntry);
+    // Write audit log entry — non-fatal: the replace is the authoritative operation.
+    // Wrapping in its own catch prevents a failed log write from returning 500
+    // after the transaction has already been mutated.
+    try {
+      const performedByEmail = typeof auth.payload['email'] === 'string' ? auth.payload['email'] : undefined;
+
+      const auditEntry: AuditLogEntry = {
+        id: randomUUID(),
+        familyId: scope.familyId,
+        action: 'edit',
+        performedBy: auth.payload.oid,
+        performedByEmail,
+        timestamp: new Date().toISOString(),
+        subjectOid: existing.kidOid,
+        targetTransactionId: transactionId,
+        before,
+        after,
+      };
+      await getContainer('auditLog').items.create(auditEntry);
+    } catch (auditErr) {
+      context.warn(`editTransaction: audit log write failed for txn ${transactionId} — transaction was updated successfully`, auditErr);
+    }
 
     return { status: 200, jsonBody: { transaction: savedTxn } };
   } catch (err) {

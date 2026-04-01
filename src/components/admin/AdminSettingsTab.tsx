@@ -1,25 +1,49 @@
-// Prototype placeholder — more settings will be added in future iterations
+import { InviteSection } from './AdminFamilyMembersTab'
+import { useState } from 'react'
+import type { FamilyMember } from '../../data/mockData'
 
-const MOCK_FAMILY_ID = 'fam_a3f8d2c1-7b4e-4a92-9e0f-1c6d38b52e74'
+interface Props {
+  familyId: string
+  members: FamilyMember[]
+  memberCount: number
+  memberLimit: number
+  onDataChange: () => void | Promise<unknown>
+  onMemberCreated?: () => void
+}
 
-export default function AdminSettingsTab() {
+export default function AdminSettingsTab({ familyId, members, memberCount, memberLimit, onDataChange, onMemberCreated }: Props) {
+  const [refreshing, setRefreshing] = useState(false)
+
+  async function handleRefresh() {
+    setRefreshing(true)
+    try { await onDataChange() } finally { setRefreshing(false) }
+  }
+
   return (
     <div className="admin-settings-tab">
-      <h2 className="section-title">Settings</h2>
+      <div className="admin-summary-tab__header">
+        <h2 className="section-title">Settings</h2>
+        <button
+          className="btn btn--secondary btn--sm"
+          onClick={handleRefresh}
+          disabled={refreshing}
+        >
+          {refreshing ? '↻ Refreshing…' : '↻ Refresh'}
+        </button>
+      </div>
 
-      <div className="settings-card">
+      <InviteSection members={members} memberCount={memberCount} memberLimit={memberLimit} onMemberCreated={onMemberCreated} />
+
+      <div className="settings-card" style={{ marginTop: 16 }}>
         <div className="settings-card__row">
           <div>
             <p className="settings-card__label">Family ID</p>
-            <p className="settings-card__hint">
-              Share this ID with family members to link their accounts.
-            </p>
           </div>
           <div className="family-id-display">
-            <code className="family-id-code">{MOCK_FAMILY_ID}</code>
+            <code className="family-id-code">{familyId}</code>
             <button
               className="btn btn--secondary btn--sm"
-              onClick={() => navigator.clipboard.writeText(MOCK_FAMILY_ID)}
+              onClick={() => navigator.clipboard.writeText(familyId)}
               title="Copy to clipboard"
             >
               Copy
@@ -27,8 +51,6 @@ export default function AdminSettingsTab() {
           </div>
         </div>
       </div>
-
-      <p className="settings-more-coming">Additional settings will be added here.</p>
     </div>
   )
 }

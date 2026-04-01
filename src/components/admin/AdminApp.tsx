@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { kidsData } from '../../data/mockData'
+import type { FamilyData, KidView, Transaction, AuditLogEntry } from '../../data/mockData'
 import AdminSummaryTab from './AdminSummaryTab'
 import AdminFamilyMembersTab from './AdminFamilyMembersTab'
 import AdminTransactionsTab from './AdminTransactionsTab'
@@ -16,7 +16,17 @@ const TAB_LABELS: Record<AdminTab, string> = {
   'settings':       'Settings',
 }
 
-export default function AdminApp() {
+interface Props {
+  familyData: FamilyData
+  kidViews: KidView[]
+  allTransactions: Transaction[]
+  auditLog: AuditLogEntry[]
+  onDataChange: () => void
+  /** Silently re-fetches /api/family so newly joined members appear in kid list */
+  onRefreshFamily: () => void
+}
+
+export default function AdminApp({ familyData, kidViews, allTransactions, auditLog, onDataChange, onRefreshFamily }: Props) {
   const [activeTab, setActiveTab]               = useState<AdminTab>('summary')
   const [pendingTab, setPendingTab]             = useState<AdminTab | null>(null)
   const [familyTabHasUnsaved, setFamilyTabHasUnsaved] = useState(false)
@@ -27,6 +37,9 @@ export default function AdminApp() {
       setPendingTab(tab)
     } else {
       setActiveTab(tab)
+      // Re-fetch family data when navigating to Family Members so newly joined
+      // members (via invite code) appear without requiring a full page reload.
+      if (tab === 'family-members') onRefreshFamily()
     }
   }
 
@@ -82,24 +95,37 @@ export default function AdminApp() {
 
       <main className="tab-content">
         {activeTab === 'summary' && (
-          <AdminSummaryTab kids={kidsData} />
+          <AdminSummaryTab kids={kidViews} onDataChange={onDataChange} />
         )}
         {activeTab === 'family-members' && (
           <AdminFamilyMembersTab
-            kids={kidsData}
+            kids={kidViews}
             onUnsavedStatusChange={setFamilyTabHasUnsaved}
+            onSettingsSaved={onRefreshFamily}
+            onMemberCreated={onRefreshFamily}
+            familyId={familyData.familyId}
+            memberCount={familyData.members.length}
+            memberLimit={familyData.memberLimit}
           />
         )}
         {activeTab === 'transactions' && (
-          <AdminTransactionsTab kids={kidsData} />
+          <AdminTransactionsTab kids={kidViews} allTransactions={allTransactions} onDataChange={onDataChange} />
         )}
         {activeTab === 'logs' && (
-          <AdminLogsTab />
+          <AdminLogsTab logs={auditLog} kids={kidViews} onDataChange={onDataChange} />
         )}
         {activeTab === 'settings' && (
-          <AdminSettingsTab />
+          <AdminSettingsTab
+            familyId={familyData.familyId}
+            members={familyData.members}
+            memberCount={familyData.members.length}
+            memberLimit={familyData.memberLimit}
+            onDataChange={onDataChange}
+            onMemberCreated={onRefreshFamily}
+          />
         )}
       </main>
     </div>
   )
 }
+

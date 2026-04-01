@@ -1,23 +1,37 @@
 import { useState } from 'react'
-import type { KidId } from '../../data/mockData'
-import { kidsData } from '../../data/mockData'
+import type { KidView } from '../../data/mockData'
 import SummaryTab from './SummaryTab'
 import TransactionsTab from './TransactionsTab'
 
 type TabId = 'summary' | 'transactions'
 
 interface Props {
-  kidId: KidId
+  currentUserOid: string
+  kidViews: KidView[]
+  onDataChange?: () => void | Promise<unknown>
 }
 
-export default function UserApp({ kidId }: Props) {
+export default function UserApp({ currentUserOid, kidViews, onDataChange }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>('summary')
-  const kid = kidsData[kidId]
+  const kid = kidViews.find(k => k.oid === currentUserOid)
+
+  if (!kid) {
+    return (
+      <div className="user-app">
+        <div className="app-error">
+          <div className="app-error__card">
+            <h2>No allowance account</h2>
+            <p>Your profile doesn&apos;t have an allowance account set up yet. Ask your family admin.</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="user-app">
       <header className="user-header">
-        <h1 className="user-header__name">{kid.name}'s Account</h1>
+        <h1 className="user-header__name">{kid.displayName}&apos;s Account</h1>
       </header>
 
       <nav className="tab-nav">
@@ -44,6 +58,7 @@ export default function UserApp({ kidId }: Props) {
             transactions={kid.transactions}
             allowDelete={false}
             allowEdit={false}
+            onDataChange={onDataChange}
           />
         )}
       </main>

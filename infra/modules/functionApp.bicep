@@ -25,11 +25,14 @@ param name string
 @description('Storage account name — must be lowercase alphanumeric, ≤24 chars.')
 param storageAccountName string
 
-@description('The Key Vault name (in the same resource group) to grant access to.')
+@description('The Key Vault name (in the same resource group) — provisioned for future secrets.')
 param keyVaultName string
 
-@description('Full Key Vault secret URI for the Cosmos DB connection string.')
-param cosmosDbConnectionStringSecretUri string
+@description('Cosmos DB account name — used to assign the SQL Data Contributor role to the Function App identity.')
+param cosmosDbAccountName string
+
+@description('Cosmos DB account endpoint — used by the Function App to connect via managed identity.')
+param cosmosDbEndpoint string
 
 @description('Default hostname of the Static Web App (for CORS allowlist).')
 param swaHostname string
@@ -39,6 +42,9 @@ param externalIdTenantId string = ''
 
 @description('App registration client ID — used by API for JWT audience validation.')
 param externalIdClientId string = ''
+
+@description('When true, adds http://localhost:5173 to CORS allowed origins. Set to true for dev environments only.')
+param allowLocalhostCors bool = false
 
 // ---------------------------------------------------------------------------
 // Storage Account (required by Flex Consumption — identity-based connection)
@@ -129,24 +135,27 @@ resource funcApp 'Microsoft.Web/sites@2023-12-01' = {
 }
 
 // ---------------------------------------------------------------------------
-// Role assignments — both must complete before app settings (KV reference)
+// Role assignments — all must complete before app settings
 // ---------------------------------------------------------------------------
 
 resource existingKeyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   name: keyVaultName
 }
 
-// Key Vault Secrets User — lets the Function App read secrets
-resource kvSecretsUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(existingKeyVault.id, funcApp.id, '4633458b-17de-408a-b874-0445c86b69e6')
-  scope: existingKeyVault
+// Cosmos DB account reference — used for the SQL RBAC role assignment below
+resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' existing = {
+  name: cosmosDbAccountName
+}
+
+// Cosmos DB Built-in Data Contributor — lets the Function App read/write all containers.
+// Role definition ID 00000000-0000-0000-0000-000000000002 is the well-known built-in role.
+resource cosmosDataContributorRole 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-11-15' = {
+  parent: cosmosAccount
+  name: guid(cosmosAccount.id, funcApp.id, '00000000-0000-0000-0000-000000000002')
   properties: {
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      '4633458b-17de-408a-b874-0445c86b69e6' // Key Vault Secrets User
-    )
+    roleDefinitionId: '${cosmosAccount.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
     principalId: funcApp.identity.principalId
-    principalType: 'ServicePrincipal'
+    scope: cosmosAccount.id
   }
 }
 
@@ -176,16 +185,17 @@ resource appSettings 'Microsoft.Web/sites/config@2023-12-01' = {
   properties: {
     FUNCTIONS_EXTENSION_VERSION: '~4'
 
-    // Cosmos DB connection string via Key Vault reference.
-    // Requires Key Vault Secrets User role (assigned above).
-    COSMOS_DB_CONNECTION_STRING: '@Microsoft.KeyVault(SecretUri=${cosmosDbConnectionStringSecretUri})'
+    // Cosmos DB endpoint — the Function App connects via managed identity.
+    // The 'Cosmos DB Built-in Data Contributor' SQL role is assigned above.
+    // Requires RBAC propagation (~5 min) before the first request after provisioning.
+    COSMOS_DB_ENDPOINT: cosmosDbEndpoint
 
     // Entra External ID — JWT validation in auth middleware
     EXTERNAL_ID_TENANT_ID: externalIdTenantId
     EXTERNAL_ID_CLIENT_ID: externalIdClientId
     EXTERNAL_ID_AUTHORITY: 'https://bleytech.ciamlogin.com/'
   }
-  dependsOn: [kvSecretsUserRole, storageBlobRole]
+  dependsOn: [cosmosDataContributorRole, storageBlobRole]
 }
 
 // ---------------------------------------------------------------------------
@@ -197,10 +207,10 @@ resource corsConfig 'Microsoft.Web/sites/config@2023-12-01' = {
   name: 'web'
   properties: {
     cors: {
-      allowedOrigins: [
-        'http://localhost:5173' // Vite dev server
-        'https://${swaHostname}' // Production SWA
-      ]
+      allowedOrigins: union(
+        ['https://${swaHostname}'],
+        allowLocalhostCors ? ['http://localhost:5173'] : []
+      )
       supportCredentials: false // Credentials sent via Authorization header, not cookies
     }
     // Disable remote debugging in all environments

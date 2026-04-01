@@ -1,0 +1,19 @@
+{
+  "routes": [
+    { "route": "/superadmin", "rewrite": "/index.html" },
+    { "route": "/superadmin/*", "rewrite": "/index.html" },
+    { "route": "/auth/callback", "rewrite": "/index.html" }
+  ],
+  "navigationFallback": {
+    "rewrite": "/index.html",
+    "exclude": ["/assets/*", "/icons.svg", "/favicon.svg", "*.css", "*.js", "*.png", "*.svg", "*.ico"]
+  },
+  "globalHeaders": {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; connect-src 'self' https://bleytech.ciamlogin.com https://func-allow-asgrv4lz76jx.azurewebsites.net https://ashy-ocean-0fb03610f.1.azurestaticapps.net; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self';"
+  }
+}

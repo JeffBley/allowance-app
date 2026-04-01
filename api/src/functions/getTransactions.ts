@@ -14,16 +14,24 @@ import type { Transaction } from '../data/models.js';
 async function getTransactions(request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   context.log('getTransactions invoked');
 
-  const auth = await validateBearerToken(request);
+  const auth = await validateBearerToken(request, context);
   if (!auth) return UNAUTHORIZED;
 
-  const scope = await resolveFamilyScope(auth.payload.oid);
+  const scope = await resolveFamilyScope(auth.payload.oid, context);
   if (!scope) return NOT_ENROLLED;
 
   // Parse optional query params
   const kidOidParam = request.query.get('kidOid') ?? undefined;
   const fromParam = request.query.get('from') ?? undefined;
   const toParam = request.query.get('to') ?? undefined;
+
+  // Validate date params if provided
+  if (fromParam && isNaN(Date.parse(fromParam))) {
+    return { status: 400, jsonBody: { code: 'INVALID_DATE', message: "'from' must be a valid ISO 8601 date string." } };
+  }
+  if (toParam && isNaN(Date.parse(toParam))) {
+    return { status: 400, jsonBody: { code: 'INVALID_DATE', message: "'to' must be a valid ISO 8601 date string." } };
+  }
 
   // Security: Users can only see their own transactions regardless of kidOid param
   const effectiveKidOid = scope.role === 'User' ? auth.payload.oid : kidOidParam;

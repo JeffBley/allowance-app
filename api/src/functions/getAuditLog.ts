@@ -12,10 +12,10 @@ import type { AuditLogEntry } from '../data/models.js';
 async function getAuditLog(request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   context.log('getAuditLog invoked');
 
-  const auth = await validateBearerToken(request);
+  const auth = await validateBearerToken(request, context);
   if (!auth) return UNAUTHORIZED;
 
-  const scope = await resolveFamilyScope(auth.payload.oid);
+  const scope = await resolveFamilyScope(auth.payload.oid, context);
   if (!scope) return NOT_ENROLLED;
   if (scope.role !== 'FamilyAdmin') return FORBIDDEN;
 
@@ -25,8 +25,16 @@ async function getAuditLog(request: HttpRequest, context: InvocationContext): Pr
   const toParam = request.query.get('to') ?? undefined;
 
   // Validate action filter if provided
-  if (actionParam && !['edit', 'delete'].includes(actionParam)) {
-    return { status: 400, jsonBody: { code: 'INVALID_ACTION', message: 'action must be edit or delete.' } };
+  if (actionParam && !['edit', 'delete', 'member_delete'].includes(actionParam)) {
+    return { status: 400, jsonBody: { code: 'INVALID_ACTION', message: 'action must be edit, delete, or member_delete.' } };
+  }
+
+  // Validate date params if provided
+  if (fromParam && isNaN(Date.parse(fromParam))) {
+    return { status: 400, jsonBody: { code: 'INVALID_DATE', message: "'from' must be a valid ISO 8601 date string." } };
+  }
+  if (toParam && isNaN(Date.parse(toParam))) {
+    return { status: 400, jsonBody: { code: 'INVALID_DATE', message: "'to' must be a valid ISO 8601 date string." } };
   }
 
   try {
@@ -36,6 +44,16 @@ async function getAuditLog(request: HttpRequest, context: InvocationContext): Pr
     const parameters: { name: string; value: string }[] = [
       { name: '@familyId', value: scope.familyId },
     ];
+
+    // Push kidOid filter to Cosmos via the indexed subjectOid field.
+    // subjectOid is populated on all new audit entries (edit → transaction's kidOid,
+    // delete → transaction's kidOid, member_delete → deleted member's oid).
+    // Legacy entries written before this field was added will be absent from
+    // kidOid-filtered results, which is acceptable — they predate the filter UI.
+    if (kidOidParam) {
+      query += ' AND c.subjectOid = @subjectOid';
+      parameters.push({ name: '@subjectOid', value: kidOidParam });
+    }
 
     if (actionParam) {
       query += ' AND c.action = @action';
@@ -58,13 +76,7 @@ async function getAuditLog(request: HttpRequest, context: InvocationContext): Pr
       .query<AuditLogEntry>({ query, parameters })
       .fetchAll();
 
-    // If kidOid filter requested, filter in memory after the family-scoped query
-    // (auditLog.before.kidOid is nested, not a top-level indexed field)
-    const filtered = kidOidParam
-      ? resources.filter(entry => entry.before?.kidOid === kidOidParam || entry.after?.kidOid === kidOidParam)
-      : resources;
-
-    return { status: 200, jsonBody: { entries: filtered } };
+    return { status: 200, jsonBody: { entries: resources } };
   } catch (err) {
     context.error('getAuditLog error', err);
     return { status: 500, jsonBody: { code: 'INTERNAL_ERROR', message: 'Failed to fetch audit log.' } };

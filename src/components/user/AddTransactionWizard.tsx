@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import type { Kid } from '../../data/mockData'
+import type { KidView } from '../../data/mockData'
+import { useApi } from '../../hooks/useApi'
 
 interface Props {
-  kid: Kid
+  kid: KidView
   onClose: () => void
 }
 
@@ -11,6 +12,7 @@ type Category = 'income' | 'purchase' | 'tithing'
 interface WizardState {
   category: Category | null
   amount: string
+  hours: string
   shouldBeTithed: boolean | null
   notes: string
 }
@@ -54,17 +56,27 @@ const CATEGORY_META: Record<Category, { icon: string; label: string; description
 }
 
 export default function AddTransactionWizard({ kid, onClose }: Props) {
+  const { apiFetch } = useApi()
   const [step, setStep] = useState(0)
   const [state, setState] = useState<WizardState>({
     category: null,
     amount: '',
+    hours: '',
     shouldBeTithed: null,
     notes: '',
   })
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
 
   const maxStep    = getMaxStep(state.category)
   const screen     = getScreenName(step, state.category)
-  const amountNum  = parseFloat(state.amount) || 0
+  const hourlyOn    = kid.kidSettings?.hourlyWagesEnabled === true
+  const wageRate    = kid.kidSettings?.hourlyWageRate ?? 10
+  const hoursNum    = parseFloat(state.hours) || 0
+  // If hourly wages active and hours entered, derive amount from hours × rate
+  const amountNum   = (hourlyOn && state.category === 'income' && hoursNum > 0)
+    ? Math.round(hoursNum * wageRate * 100) / 100
+    : parseFloat(state.amount) || 0
   const titheAmt   = amountNum * 0.1
 
   const newTithingOwed =
@@ -89,9 +101,29 @@ export default function AddTransactionWizard({ kid, onClose }: Props) {
   function handleNext() { if (step < maxStep) setStep(s => s + 1) }
   function handleBack() { if (step > 0) setStep(s => s - 1) }
 
-  function handleSubmit() {
-    // Prototype only — no API call yet
-    onClose()
+  async function handleSubmit() {
+    if (!state.category) return
+    setSubmitting(true)
+    setSubmitError(null)
+    try {
+      const categoryMap = { income: 'Income', purchase: 'Purchase', tithing: 'Tithing' } as const
+      await apiFetch('transactions', {
+        method: 'POST',
+        body: JSON.stringify({
+          kidOid:   kid.oid,
+          category: categoryMap[state.category],
+          amount:   amountNum,
+          date:     new Date().toISOString().split('T')[0],
+          notes:    state.notes.trim(),
+          ...(state.category === 'income' && { tithable: state.shouldBeTithed !== false }),
+        }),
+      })
+      onClose()
+    } catch (err) {
+      const apiErr = err as { body?: { message?: string } }
+      setSubmitError(apiErr?.body?.message ?? 'Failed to save transaction. Please try again.')
+      setSubmitting(false)
+    }
   }
 
   // Progress indicator dots
@@ -138,7 +170,7 @@ export default function AddTransactionWizard({ kid, onClose }: Props) {
                   <button
                     key={cat}
                     className={`category-btn${state.category === cat ? ' category-btn--selected' : ''}`}
-                    onClick={() => setState(s => ({ ...s, category: cat }))}
+                    onClick={() => { setState(s => ({ ...s, category: cat })); setStep(1) }}
                   >
                     <span className="category-btn__icon">{CATEGORY_META[cat].icon}</span>
                     <span className="category-btn__label">{CATEGORY_META[cat].label}</span>
@@ -152,31 +184,75 @@ export default function AddTransactionWizard({ kid, onClose }: Props) {
           {/* STEP: Amount */}
           {screen === 'amount' && (
             <div className="wizard-screen">
-              <p className="wizard-screen__prompt">
-                {state.category === 'tithing' ? 'How much tithing are you paying?' : 'Enter the amount:'}
-              </p>
-              {state.category === 'tithing' && (
-                <p className="wizard-screen__hint">
-                  Tithing owed: <strong>{fmt(kid.tithingOwed)}</strong>
-                </p>
-              )}
-              <div className="amount-input-wrapper">
-                <span className="amount-input-prefix">$</span>
-                <input
-                  className="amount-input"
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  placeholder="0.00"
-                  value={state.amount}
-                  onChange={e => setState(s => ({ ...s, amount: e.target.value }))}
-                  autoFocus
-                />
-              </div>
-              {state.category === 'tithing' && amountNum > kid.tithingOwed && amountNum > 0 && (
-                <p className="wizard-screen__warning">
-                  ⚠ Amount exceeds tithing owed ({fmt(kid.tithingOwed)})
-                </p>
+              {/* Hourly wages: income with hourlyWagesEnabled shows hours-or-amount */}
+              {hourlyOn && state.category === 'income' ? (
+                <>
+                  <p className="wizard-screen__prompt">How was this income earned?</p>
+                  <div className="wizard-wages-block">
+                    <p className="wizard-wages-label">Enter the number of hours:</p>
+                    <div className="amount-input-wrapper">
+                      <input
+                        className="amount-input"
+                        type="number"
+                        min="0.01"
+                        step="0.25"
+                        placeholder="0"
+                        value={state.hours}
+                        onChange={e => setState(s => ({ ...s, hours: e.target.value, amount: '' }))}
+                        autoFocus={!state.amount}
+                      />
+                    </div>
+                    {hoursNum > 0 && (
+                      <p className="wizard-wages-preview">
+                        {state.hours} hrs × {fmt(wageRate)}/hr = <strong>{fmt(hoursNum * wageRate)}</strong>
+                      </p>
+                    )}
+                    <div className="wizard-wages-or">OR</div>
+                    <p className="wizard-wages-label">Enter the amount:</p>
+                    <div className="amount-input-wrapper">
+                      <span className="amount-input-prefix">$</span>
+                      <input
+                        className="amount-input"
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        placeholder="0.00"
+                        value={state.amount}
+                        onChange={e => setState(s => ({ ...s, amount: e.target.value, hours: '' }))}
+                        autoFocus={!!state.amount}
+                      />
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="wizard-screen__prompt">
+                    {state.category === 'tithing' ? 'How much tithing are you paying?' : 'Enter the amount:'}
+                  </p>
+                  {state.category === 'tithing' && (
+                    <p className="wizard-screen__hint">
+                      Tithing owed: <strong>{fmt(kid.tithingOwed)}</strong>
+                    </p>
+                  )}
+                  <div className="amount-input-wrapper">
+                    <span className="amount-input-prefix">$</span>
+                    <input
+                      className="amount-input"
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={state.amount}
+                      onChange={e => setState(s => ({ ...s, amount: e.target.value }))}
+                      autoFocus
+                    />
+                  </div>
+                  {state.category === 'tithing' && amountNum > kid.tithingOwed && amountNum > 0 && (
+                    <p className="wizard-screen__warning">
+                      ⚠ Amount exceeds tithing owed ({fmt(kid.tithingOwed)})
+                    </p>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -309,16 +385,21 @@ export default function AddTransactionWizard({ kid, onClose }: Props) {
         {/* Footer */}
         <div className="wizard-footer">
           {step > 0 && (
-            <button className="btn btn--secondary" onClick={handleBack}>
+            <button className="btn btn--secondary" onClick={handleBack} disabled={submitting}>
               ← Back
             </button>
           )}
           <div className="wizard-footer__spacer" />
-          {step === maxStep ? (
-            <button className="btn btn--primary" onClick={handleSubmit}>
-              Submit ✓
+          {submitError && (
+            <p className="sa-form-error" role="alert" style={{ margin: '0 12px 0 0', fontSize: '0.85rem' }}>
+              {submitError}
+            </p>
+          )}
+          {step === maxStep && state.category !== null ? (
+            <button className="btn btn--primary" onClick={handleSubmit} disabled={submitting}>
+              {submitting ? 'Saving…' : 'Submit ✓'}
             </button>
-          ) : (
+          ) : step > 0 ? (
             <button
               className="btn btn--primary"
               onClick={handleNext}
@@ -326,7 +407,7 @@ export default function AddTransactionWizard({ kid, onClose }: Props) {
             >
               Next →
             </button>
-          )}
+          ) : null}
         </div>
 
       </div>

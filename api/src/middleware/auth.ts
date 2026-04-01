@@ -1,5 +1,5 @@
 import { createRemoteJWKSet, jwtVerify, JWTPayload } from 'jose';
-import type { HttpRequest } from '@azure/functions';
+import type { HttpRequest, InvocationContext } from '@azure/functions';
 
 // ---------------------------------------------------------------------------
 // JWT validation for Entra External ID (CIAM) tokens
@@ -14,19 +14,27 @@ import type { HttpRequest } from '@azure/functions';
 // Read config from environment (set in azure.yaml → infra → App Settings)
 const TENANT_ID = process.env['EXTERNAL_ID_TENANT_ID'] ?? '';
 const CLIENT_ID = process.env['EXTERNAL_ID_CLIENT_ID'] ?? '';
-const AUTHORITY = process.env['EXTERNAL_ID_AUTHORITY'] ?? 'https://bleytech.ciamlogin.com/';
 
 if (!TENANT_ID || !CLIENT_ID) {
   // Log a warning at startup — functions will return 401 for all requests until configured.
   console.warn('[auth] EXTERNAL_ID_TENANT_ID or EXTERNAL_ID_CLIENT_ID is not set. All API calls will be rejected.');
 }
 
-// JWKS endpoint for Entra External ID (CIAM) — derived from tenant ID
-const JWKS_URI = new URL(`${TENANT_ID}/discovery/v2.0/keys`, AUTHORITY);
+// ---------------------------------------------------------------------------
+// Entra External ID (CIAM) uses the tenant ID as the subdomain for token
+// issuance — regardless of any custom domain used for the login UX.
+//
+// Token iss format: https://{tenantId}.ciamlogin.com/{tenantId}/v2.0
+// Custom domain (bleytech.ciamlogin.com) is login UX only; tokens always
+// carry the GUID-subdomain issuer.
+// ---------------------------------------------------------------------------
+const CIAM_BASE = `https://${TENANT_ID}.ciamlogin.com`;
 
-// Expected token issuer — must match exactly
-// Format: https://bleytech.ciamlogin.com/<tenantId>/v2.0
-const EXPECTED_ISSUER = new URL(`${TENANT_ID}/v2.0`, AUTHORITY).toString();
+// JWKS endpoint — fetched from the tenant ID subdomain authority
+const JWKS_URI = new URL(`/${TENANT_ID}/discovery/v2.0/keys`, CIAM_BASE);
+
+// Expected token issuer — must match exactly what Entra puts in the iss claim
+const EXPECTED_ISSUER = `${CIAM_BASE}/${TENANT_ID}/v2.0`;
 
 /**
  * Remote JWKS set — cached in memory for the lifetime of the Function App instance.
@@ -48,7 +56,8 @@ export interface AuthResult {
  *
  * @throws Never — returns null on failure so callers can return 401/403 cleanly.
  */
-export async function validateBearerToken(request: HttpRequest): Promise<AuthResult | null> {
+export async function validateBearerToken(request: HttpRequest, context?: InvocationContext): Promise<AuthResult | null> {
+  const logWarn = (msg: string) => context ? context.warn(msg) : console.warn(msg);
   try {
     const authHeader = request.headers.get('authorization');
     if (!authHeader?.startsWith('Bearer ')) {
@@ -66,15 +75,14 @@ export async function validateBearerToken(request: HttpRequest): Promise<AuthRes
     // oid claim is required — used to look up family membership
     const oid = payload['oid'];
     if (typeof oid !== 'string' || !oid) {
-      console.warn('[auth] Token missing oid claim');
+      logWarn('[auth] Token missing oid claim');
       return null;
     }
 
     return { payload: { ...payload, oid } };
   } catch (err) {
-    // Log token validation failure without leaking token details or PII
     const errMessage = err instanceof Error ? err.message : String(err);
-    console.warn(`[auth] Token validation failed: ${errMessage}`);
+    logWarn(`[auth] Token validation failed: ${errMessage}`);
     return null;
   }
 }

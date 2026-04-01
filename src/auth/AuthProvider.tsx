@@ -1,8 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { MsalProvider, useMsal, useIsAuthenticated } from '@azure/msal-react';
-import { EventType } from '@azure/msal-browser';
-import type { AuthenticationResult } from '@azure/msal-browser';
 import { msalInstance, loginRequest } from './msalConfig';
+
+// ---------------------------------------------------------------------------
+// Module-level boot error — set by main.tsx before React renders so that
+// LoginGate can display what went wrong during MSAL initialization.
+// ---------------------------------------------------------------------------
+let _bootError: string | null = null;
+export function setAuthBootError(msg: string) { _bootError = msg; }
+export function getAuthBootError() { return _bootError; }
 
 // ---------------------------------------------------------------------------
 // AuthProvider — wraps the app with MSAL context
@@ -16,31 +22,8 @@ interface AuthProviderProps {
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
-  useEffect(() => {
-    // Handle redirect response on page load (auth code exchange result)
-    msalInstance.initialize().then(() => {
-      msalInstance.handleRedirectPromise().catch((err: unknown) => {
-        // Log redirect errors without exposing sensitive details
-        console.error('[AuthProvider] Redirect error:', err instanceof Error ? err.message : String(err));
-      });
-    });
-
-    // Set the active account when a user logs in
-    const callbackId = msalInstance.addEventCallback((event) => {
-      if (
-        event.eventType === EventType.LOGIN_SUCCESS &&
-        event.payload
-      ) {
-        const payload = event.payload as AuthenticationResult;
-        msalInstance.setActiveAccount(payload.account);
-      }
-    });
-
-    return () => {
-      if (callbackId) msalInstance.removeEventCallback(callbackId);
-    };
-  }, []);
-
+  // MSAL is initialized and the active account is set before this component
+  // mounts (see main.tsx bootstrap). MsalProvider here provides React context.
   return <MsalProvider instance={msalInstance}>{children}</MsalProvider>;
 }
 
@@ -60,8 +43,21 @@ export function LoginGate({ children }: LoginGateProps) {
   const handleSignIn = async () => {
     setSigningIn(true);
     try {
-      // Use redirect flow — more reliable on mobile than popup
-      await instance.loginRedirect(loginRequest);
+      // Use redirect flow — more reliable on mobile than popup.
+      // redirectStartPage tells MSAL to navigate back to the current URL
+      // (including any ?invite= query param) after auth completes, rather
+      // than always landing at the app root.
+      //
+      // If the user arrived via an invite link, set prompt=create so Entra
+      // External ID shows the sign-up (account creation) flow rather than
+      // the default sign-in form — new users following an invite likely don't
+      // have an account yet.
+      const hasInvite = new URLSearchParams(window.location.search).has('invite');
+      await instance.loginRedirect({
+        ...loginRequest,
+        redirectStartPage: window.location.href,
+        ...(hasInvite ? { prompt: 'create' } : {}),
+      });
     } catch (err) {
       console.error('[LoginGate] Sign-in error:', err instanceof Error ? err.message : String(err));
       setSigningIn(false);
@@ -77,17 +73,42 @@ export function LoginGate({ children }: LoginGateProps) {
   }
 
   if (!isAuthenticated) {
+    const bootError = getAuthBootError();
     return (
       <div className="auth-signin">
         <div className="auth-signin-card">
-          <h1>Allowance App</h1>
-          <p>Sign in with your Microsoft account to continue.</p>
+          <div className="auth-signin-card__logo" aria-hidden="true">💰</div>
+          <h1 className="auth-signin-card__title">Allowance App</h1>
+          <p className="auth-signin-card__subtitle">
+            Track allowances, spending, and savings for your whole family.
+          </p>
+          {bootError && (
+            <div className="auth-signin-card__error" role="alert">
+              <strong>Sign-in error:</strong> {bootError}
+              <br />
+              <button
+                className="sa-link"
+                type="button"
+                style={{ fontSize: '0.8rem', marginTop: 6 }}
+                onClick={() => { sessionStorage.clear(); window.location.replace('/'); }}
+              >
+                Clear session &amp; retry
+              </button>
+            </div>
+          )}
           <button
-            className="btn btn-primary"
+            className="auth-signin-card__btn"
             onClick={handleSignIn}
             disabled={signingIn}
           >
-            {signingIn ? 'Redirecting...' : 'Sign in'}
+            {signingIn ? (
+              <>
+                <span className="auth-signin-card__btn-spinner" aria-hidden="true" />
+                Redirecting…
+              </>
+            ) : (
+              'Sign in to continue'
+            )}
           </button>
         </div>
       </div>

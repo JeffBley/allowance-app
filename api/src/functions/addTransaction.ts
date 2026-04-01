@@ -12,10 +12,10 @@ import { randomUUID } from 'node:crypto';
 async function addTransaction(request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
   context.log('addTransaction invoked');
 
-  const auth = await validateBearerToken(request);
+  const auth = await validateBearerToken(request, context);
   if (!auth) return UNAUTHORIZED;
 
-  const scope = await resolveFamilyScope(auth.payload.oid);
+  const scope = await resolveFamilyScope(auth.payload.oid, context);
   if (!scope) return NOT_ENROLLED;
 
   // Only FamilyAdmin can add transactions
@@ -38,9 +38,9 @@ async function addTransaction(request: HttpRequest, context: InvocationContext):
     return { status: 400, jsonBody: { code: 'INVALID_CATEGORY', message: 'category must be Income, Purchase, or Tithing.' } };
   }
 
-  // Validate amount: positive number
-  if (typeof body.amount !== 'number' || isNaN(body.amount) || body.amount <= 0) {
-    return { status: 400, jsonBody: { code: 'INVALID_AMOUNT', message: 'amount must be a positive number.' } };
+  // Validate amount: positive number, with a reasonable maximum
+  if (typeof body.amount !== 'number' || isNaN(body.amount) || body.amount <= 0 || body.amount > 100000) {
+    return { status: 400, jsonBody: { code: 'INVALID_AMOUNT', message: 'amount must be a positive number no greater than 100,000.' } };
   }
 
   // Validate date is a parseable ISO 8601 string
@@ -48,9 +48,21 @@ async function addTransaction(request: HttpRequest, context: InvocationContext):
     return { status: 400, jsonBody: { code: 'INVALID_DATE', message: 'date must be a valid ISO 8601 string.' } };
   }
 
+  // Validate notes length
+  if (body.notes && body.notes.length > 500) {
+    return { status: 400, jsonBody: { code: 'INVALID_NOTES', message: 'notes must be 500 characters or fewer.' } };
+  }
+
   try {
     const container = getContainer('transactions');
+    const usersContainer = getContainer('users');
     const now = new Date().toISOString();
+
+    // Verify kidOid belongs to this family — prevents attributing transactions to foreign OIDs
+    const { resource: kid } = await usersContainer.item(body.kidOid, scope.familyId).read();
+    if (!kid) {
+      return { status: 400, jsonBody: { code: 'INVALID_KID', message: 'kidOid does not belong to this family.' } };
+    }
 
     const transaction: Transaction = {
       id: randomUUID(),
@@ -60,6 +72,8 @@ async function addTransaction(request: HttpRequest, context: InvocationContext):
       amount: body.amount,
       notes: body.notes ?? '',
       date: body.date,
+      // tithable is only meaningful for Income; defaults to true when absent
+      tithable: body.category === 'Income' ? (body.tithable !== false) : undefined,
       createdBy: auth.payload.oid,
       createdAt: now,
     };

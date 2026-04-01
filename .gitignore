@@ -35,5 +35,8 @@ api/dist/
 # Local env overrides (contains VITE_ secrets for local dev)
 .env.local
 
+# Generated at build time by azure.yaml prepackage hook — contains VITE_ secrets
+.env
+
 # Internal security tracker — MUST NOT be committed
 .internal/

@@ -1,9 +1,43 @@
 import { useState, useMemo } from 'react'
-import type { LogEntry, EditLogEntry, DeleteLogEntry, KidId } from '../../data/mockData'
-import { auditLog, kidsData } from '../../data/mockData'
+import type { AuditLogEntry, KidView } from '../../data/mockData'
 
-type ChildFilter = KidId | 'all'
-type ActionFilter = 'all' | 'edit' | 'delete'
+interface Props {
+  logs: AuditLogEntry[]
+  kids: KidView[]
+  onDataChange: () => void | Promise<unknown>
+}
+
+type ChildFilter = string | 'all'
+type ActionFilter = 'all' | 'edit' | 'delete' | 'member_delete'
+type DateRange = '1d' | '3d' | '1w' | '2w' | '1m' | '3m' | '6m' | '1y' | 'all'
+
+const DATE_RANGE_LABELS: Record<DateRange, string> = {
+  '1d':  'Last 1 day',
+  '3d':  'Last 3 days',
+  '1w':  'Last 1 week',
+  '2w':  'Last 2 weeks',
+  '1m':  'Last 1 month',
+  '3m':  'Last 3 months',
+  '6m':  'Last 6 months',
+  '1y':  'Last 1 year',
+  'all': 'All time',
+}
+
+function getLogCutoff(range: DateRange): Date | null {
+  if (range === 'all') return null
+  const d = new Date()
+  switch (range) {
+    case '1d': d.setDate(d.getDate() - 1);        break
+    case '3d': d.setDate(d.getDate() - 3);        break
+    case '1w': d.setDate(d.getDate() - 7);        break
+    case '2w': d.setDate(d.getDate() - 14);       break
+    case '1m': d.setMonth(d.getMonth() - 1);      break
+    case '3m': d.setMonth(d.getMonth() - 3);      break
+    case '6m': d.setMonth(d.getMonth() - 6);      break
+    case '1y': d.setFullYear(d.getFullYear() - 1); break
+  }
+  return d
+}
 
 function formatDateTime(iso: string): string {
   const d = new Date(iso)
@@ -15,53 +49,70 @@ function formatDateTime(iso: string): string {
 }
 
 function formatDate(iso: string): string {
-  const [year, month, day] = iso.split('-').map(Number)
-  return new Date(year, month - 1, day).toLocaleDateString('en-US', {
+  return new Date(iso).toLocaleDateString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric',
   })
 }
 
 function fmt(n: number): string { return `$${n.toFixed(2)}` }
 
-function txSummary(t: { date: string; type: string; amount: number; notes: string; tithingApplies: boolean | null }): string {
-  const sign = t.type === 'withdrawal' ? '−' : '+'
-  return `${sign}${fmt(t.amount)} on ${formatDate(t.date)}`
+/** Returns the best available label for who performed an action. Never shows a GUID UPN. */
+function actorLabel(entry: AuditLogEntry): string {
+  return entry.performedByEmail ?? entry.performedByName ?? entry.performedBy
 }
 
-// Collect all fields that differ between before/after
-function diffFields(before: EditLogEntry['before'], after: EditLogEntry['after']): string[] {
-  const fields: string[] = []
-  if (before.date         !== after.date)         fields.push('date')
-  if (before.type         !== after.type)         fields.push('type')
-  if (before.amount       !== after.amount)       fields.push('amount')
-  if (before.notes        !== after.notes)        fields.push('notes')
-  if (before.tithingApplies !== after.tithingApplies) fields.push('tithingApplies')
-  return fields
+function txSummary(
+  category: string | undefined,
+  amount: number | undefined,
+  date: string | undefined,
+): string {
+  if (!amount || !date) return '—'
+  const sign = category !== 'Income' ? '−' : '+'
+  return `${sign}${fmt(amount)} on ${formatDate(date)}`
 }
 
-function tithingLabel(v: boolean | null): string {
-  if (v === null) return '—'
-  return v ? 'Yes' : 'No'
+// Fields that can differ between before/after in an edit
+const DIFFABLE_FIELDS = ['date', 'category', 'amount', 'notes'] as const
+type DiffableField = (typeof DIFFABLE_FIELDS)[number]
+
+const FIELD_LABELS: Record<DiffableField, string> = {
+  date: 'Date', category: 'Category', amount: 'Amount', notes: 'Notes',
 }
 
-interface EditRowProps { entry: EditLogEntry }
-function EditRow({ entry }: EditRowProps) {
+function diffFields(
+  before: AuditLogEntry['before'] | undefined,
+  after: NonNullable<AuditLogEntry['after']>,
+): DiffableField[] {
+  if (!before) return []
+  return DIFFABLE_FIELDS.filter(f => before[f] !== after[f])
+}
+
+function formatFieldValue(field: DiffableField, value: unknown): string {
+  if (value === undefined || value === null) return '—'
+  if (field === 'date') return formatDate(String(value))
+  if (field === 'amount') return fmt(Number(value))
+  return String(value)
+}
+
+interface EditRowProps { entry: AuditLogEntry; childName: string }
+function EditRow({ entry, childName }: EditRowProps) {
   const [expanded, setExpanded] = useState(false)
-  const changedFields = diffFields(entry.before, entry.after)
+  const after = entry.after ?? {}
+  const changedFields = diffFields(entry.before, after)
 
   return (
     <div className="log-entry log-entry--edit">
       <div className="log-entry__header" onClick={() => setExpanded(e => !e)}>
         <div className="log-entry__left">
           <span className="log-badge log-badge--edit">Edit</span>
-          <span className="log-entry__child">{entry.childName}</span>
+          <span className="log-entry__child">{childName}</span>
           <span className="log-entry__summary">
-            {txSummary(entry.after)}
-            {entry.after.notes && <span className="log-entry__notes"> — {entry.after.notes}</span>}
+            {txSummary(after.category, after.amount, after.date)}
+            {after.notes && <span className="log-entry__notes"> — {after.notes}</span>}
           </span>
         </div>
         <div className="log-entry__right">
-          <span className="log-entry__meta">by {entry.performedBy}</span>
+          <span className="log-entry__meta">by {actorLabel(entry)}</span>
           <span className="log-entry__timestamp">{formatDateTime(entry.timestamp)}</span>
           <span className={`log-entry__chevron${expanded ? ' log-entry__chevron--open' : ''}`}>›</span>
         </div>
@@ -78,36 +129,21 @@ function EditRow({ entry }: EditRowProps) {
               </tr>
             </thead>
             <tbody>
-              {changedFields.map(field => {
-                const bVal = field === 'date'
-                  ? formatDate(entry.before.date)
-                  : field === 'amount'
-                  ? fmt(entry.before.amount)
-                  : field === 'tithingApplies'
-                  ? tithingLabel(entry.before.tithingApplies)
-                  : String((entry.before as unknown as Record<string, unknown>)[field] ?? '—')
-
-                const aVal = field === 'date'
-                  ? formatDate(entry.after.date)
-                  : field === 'amount'
-                  ? fmt(entry.after.amount)
-                  : field === 'tithingApplies'
-                  ? tithingLabel(entry.after.tithingApplies)
-                  : String((entry.after as unknown as Record<string, unknown>)[field] ?? '—')
-
-                const label: Record<string, string> = {
-                  date: 'Date', type: 'Type', amount: 'Amount',
-                  notes: 'Notes', tithingApplies: 'Tithing Applies',
-                }
-
-                return (
-                  <tr key={field}>
-                    <td className="log-diff-table__field">{label[field] ?? field}</td>
-                    <td className="log-diff-table__before">{bVal}</td>
-                    <td className="log-diff-table__after">{aVal}</td>
-                  </tr>
-                )
-              })}
+              <tr>
+                <td className="log-diff-table__field">Edited at</td>
+                <td colSpan={2}>{formatDateTime(entry.timestamp)}</td>
+              </tr>
+              {changedFields.map(field => (
+                <tr key={field}>
+                  <td className="log-diff-table__field">{FIELD_LABELS[field]}</td>
+                  <td className="log-diff-table__before">
+                    {formatFieldValue(field, (entry.before as Record<string, unknown>)[field])}
+                  </td>
+                  <td className="log-diff-table__after">
+                    {formatFieldValue(field, (after as Record<string, unknown>)[field])}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -116,24 +152,24 @@ function EditRow({ entry }: EditRowProps) {
   )
 }
 
-interface DeleteRowProps { entry: DeleteLogEntry }
-function DeleteRow({ entry }: DeleteRowProps) {
+interface DeleteRowProps { entry: AuditLogEntry; childName: string }
+function DeleteRow({ entry, childName }: DeleteRowProps) {
   const [expanded, setExpanded] = useState(false)
-  const t = entry.transaction
+  const t = entry.before ?? {}
 
   return (
     <div className="log-entry log-entry--delete">
       <div className="log-entry__header" onClick={() => setExpanded(e => !e)}>
         <div className="log-entry__left">
           <span className="log-badge log-badge--delete">Delete</span>
-          <span className="log-entry__child">{entry.childName}</span>
+          <span className="log-entry__child">{childName}</span>
           <span className="log-entry__summary">
-            {txSummary(t)}
+            {txSummary(t.category, t.amount, t.date)}
             {t.notes && <span className="log-entry__notes"> — {t.notes}</span>}
           </span>
         </div>
         <div className="log-entry__right">
-          <span className="log-entry__meta">by {entry.performedBy}</span>
+          <span className="log-entry__meta">by {actorLabel(entry)}</span>
           <span className="log-entry__timestamp">{formatDateTime(entry.timestamp)}</span>
           <span className={`log-entry__chevron${expanded ? ' log-entry__chevron--open' : ''}`}>›</span>
         </div>
@@ -148,11 +184,11 @@ function DeleteRow({ entry }: DeleteRowProps) {
               </tr>
             </thead>
             <tbody>
-              <tr><td className="log-diff-table__field">Date</td><td>{formatDate(t.date)}</td></tr>
-              <tr><td className="log-diff-table__field">Type</td><td style={{ textTransform: 'capitalize' }}>{t.type}</td></tr>
-              <tr><td className="log-diff-table__field">Amount</td><td>{fmt(t.amount)}</td></tr>
+              <tr><td className="log-diff-table__field">Deleted at</td><td>{formatDateTime(entry.timestamp)}</td></tr>
+              <tr><td className="log-diff-table__field">Date</td><td>{t.date ? formatDate(t.date) : '—'}</td></tr>
+              <tr><td className="log-diff-table__field">Category</td><td>{t.category ?? '—'}</td></tr>
+              <tr><td className="log-diff-table__field">Amount</td><td>{t.amount ? fmt(t.amount) : '—'}</td></tr>
               <tr><td className="log-diff-table__field">Notes</td><td>{t.notes || '—'}</td></tr>
-              <tr><td className="log-diff-table__field">Tithing Applies</td><td>{tithingLabel(t.tithingApplies)}</td></tr>
             </tbody>
           </table>
         </div>
@@ -161,31 +197,93 @@ function DeleteRow({ entry }: DeleteRowProps) {
   )
 }
 
-export default function AdminLogsTab() {
+interface MemberDeleteRowProps { entry: AuditLogEntry }
+function MemberDeleteRow({ entry }: MemberDeleteRowProps) {
+  const [expanded, setExpanded] = useState(false)
+
+  return (
+    <div className="log-entry log-entry--delete">
+      <div className="log-entry__header" onClick={() => setExpanded(e => !e)}>
+        <div className="log-entry__left">
+          <span className="log-badge log-badge--delete">Member Deleted</span>
+          <span className="log-entry__child">{entry.memberDisplayName ?? entry.memberOid ?? '—'}</span>
+        </div>
+        <div className="log-entry__right">
+          <span className="log-entry__meta">by {actorLabel(entry)}</span>
+          <span className="log-entry__timestamp">{formatDateTime(entry.timestamp)}</span>
+          <span className={`log-entry__chevron${expanded ? ' log-entry__chevron--open' : ''}`}>›</span>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="log-entry__detail">
+          <table className="log-diff-table">
+            <thead>
+              <tr><th colSpan={2}>Deleted Member — Last Known State</th></tr>
+            </thead>
+            <tbody>
+              <tr><td className="log-diff-table__field">Deleted at</td><td>{formatDateTime(entry.timestamp)}</td></tr>
+              <tr><td className="log-diff-table__field">Name</td><td>{entry.memberDisplayName ?? '—'}</td></tr>
+              <tr><td className="log-diff-table__field">Balance</td><td>{entry.lastBalance != null ? fmt(entry.lastBalance) : '—'}</td></tr>
+              <tr><td className="log-diff-table__field">Tithing owed</td><td>{entry.lastTithingOwed != null ? fmt(entry.lastTithingOwed) : '—'}</td></tr>
+              <tr><td className="log-diff-table__field">Transactions deleted</td><td>{entry.transactionCount ?? 0}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function AdminLogsTab({ logs, kids, onDataChange }: Props) {
   const [childFilter, setChildFilter]   = useState<ChildFilter>('all')
   const [actionFilter, setActionFilter] = useState<ActionFilter>('all')
+  const [dateRange, setDateRange]       = useState<DateRange>('2w')
   const [search, setSearch]             = useState('')
+  const [refreshing, setRefreshing]     = useState(false)
+
+  async function handleRefresh() {
+    setRefreshing(true)
+    try { await onDataChange() } finally { setRefreshing(false) }
+  }
 
   const filtered = useMemo(() => {
+    const cutoff = getLogCutoff(dateRange)
     const term = search.trim().toLowerCase()
-    return auditLog
+    return logs
       .filter(entry => {
-        if (childFilter !== 'all' && entry.childId !== childFilter) return false
+        if (cutoff && new Date(entry.timestamp) < cutoff) return false
+        // member_delete entries don't have before.kidOid; skip child filter for them
+        if (childFilter !== 'all' && entry.action !== 'member_delete' && entry.before?.kidOid !== childFilter) return false
         if (actionFilter !== 'all' && entry.action !== actionFilter) return false
         if (term) {
-          const notes = entry.action === 'edit'
-            ? `${entry.before.notes} ${entry.after.notes}`
-            : entry.transaction.notes
-          if (!notes.toLowerCase().includes(term) && !entry.childName.toLowerCase().includes(term)) return false
+          if (entry.action === 'member_delete') {
+            const name = entry.memberDisplayName ?? ''
+            if (!name.toLowerCase().includes(term)) return false
+          } else {
+            const notes = entry.action === 'edit'
+              ? `${entry.before?.notes ?? ''} ${entry.after?.notes ?? ''}`
+              : (entry.before?.notes ?? '')
+            const name = kids.find(k => k.oid === entry.before?.kidOid)?.displayName ?? ''
+            if (!notes.toLowerCase().includes(term) && !name.toLowerCase().includes(term)) return false
+          }
         }
         return true
       })
-      // newest first
       .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-  }, [childFilter, actionFilter, search])
+  }, [logs, childFilter, actionFilter, dateRange, search, kids])
 
   return (
     <div className="admin-logs-tab">
+      <div className="transactions-tab__toolbar">
+        <button
+          className="btn btn--secondary"
+          onClick={handleRefresh}
+          disabled={refreshing}
+        >
+          {refreshing ? '↻ Refreshing…' : '↻ Refresh'}
+        </button>
+      </div>
       <div className="transactions-tab__filters">
         <div className="filter-group">
           <label className="filter-label" htmlFor="log-child">Child</label>
@@ -193,11 +291,11 @@ export default function AdminLogsTab() {
             id="log-child"
             className="filter-select"
             value={childFilter}
-            onChange={e => setChildFilter(e.target.value as ChildFilter)}
+            onChange={e => setChildFilter(e.target.value)}
           >
             <option value="all">All Kids</option>
-            {Object.values(kidsData).map(k => (
-              <option key={k.id} value={k.id}>{k.name}</option>
+            {kids.map(k => (
+              <option key={k.oid} value={k.oid}>{k.displayName}</option>
             ))}
           </select>
         </div>
@@ -213,6 +311,21 @@ export default function AdminLogsTab() {
             <option value="all">All Actions</option>
             <option value="edit">Edits only</option>
             <option value="delete">Deletes only</option>
+            <option value="member_delete">Member deletes</option>
+          </select>
+        </div>
+
+        <div className="filter-group">
+          <label className="filter-label" htmlFor="log-date-range">Date Range</label>
+          <select
+            id="log-date-range"
+            className="filter-select"
+            value={dateRange}
+            onChange={e => setDateRange(e.target.value as DateRange)}
+          >
+            {(Object.keys(DATE_RANGE_LABELS) as DateRange[]).map(k => (
+              <option key={k} value={k}>{DATE_RANGE_LABELS[k]}</option>
+            ))}
           </select>
         </div>
 
@@ -233,11 +346,15 @@ export default function AdminLogsTab() {
         <p className="empty-state">No log entries match the selected filters.</p>
       ) : (
         <div className="log-list">
-          {filtered.map(entry =>
-            entry.action === 'edit'
-              ? <EditRow key={entry.id} entry={entry as EditLogEntry} />
-              : <DeleteRow key={entry.id} entry={entry as DeleteLogEntry} />
-          )}
+          {filtered.map(entry => {
+            if (entry.action === 'member_delete') {
+              return <MemberDeleteRow key={entry.id} entry={entry} />
+            }
+            const childName = kids.find(k => k.oid === entry.before?.kidOid)?.displayName ?? 'Unknown'
+            return entry.action === 'edit'
+              ? <EditRow key={entry.id} entry={entry} childName={childName} />
+              : <DeleteRow key={entry.id} entry={entry} childName={childName} />
+          })}
         </div>
       )}
 

@@ -5,6 +5,7 @@ interface Props {
   transactions: Transaction[]
   allowDelete: boolean
   allowEdit: boolean
+  onDataChange?: () => void | Promise<unknown>
 }
 
 type DateRange = '2w' | '1m' | '3m' | '6m' | '1y' | '2y'
@@ -50,10 +51,17 @@ function formatMoney(amount: number): string {
   return `$${amount.toFixed(2)}`
 }
 
-export default function TransactionsTab({ transactions, allowDelete, allowEdit }: Props) {
+export default function TransactionsTab({ transactions, allowDelete, allowEdit, onDataChange }: Props) {
   const [dateRange, setDateRange] = useState<DateRange>('3m')
   const [search, setSearch]       = useState('')
   const [sortBy, setSortBy]       = useState<SortOption>('date-desc')
+  const [refreshing, setRefreshing] = useState(false)
+
+  async function handleRefresh() {
+    if (!onDataChange) return
+    setRefreshing(true)
+    try { await onDataChange() } finally { setRefreshing(false) }
+  }
 
   const filtered = useMemo(() => {
     const cutoff = getDateCutoff(dateRange)
@@ -79,6 +87,17 @@ export default function TransactionsTab({ transactions, allowDelete, allowEdit }
 
   return (
     <div className="transactions-tab">
+      {onDataChange && (
+        <div className="transactions-tab__toolbar">
+          <button
+            className="btn btn--secondary btn--sm"
+            onClick={handleRefresh}
+            disabled={refreshing}
+          >
+            {refreshing ? '\u21bb Refreshing…' : '\u21bb Refresh'}
+          </button>
+        </div>
+      )}
       <div className="transactions-tab__filters">
         <div className="filter-group">
           <label className="filter-label" htmlFor="date-range">Date Range</label>
@@ -129,10 +148,9 @@ export default function TransactionsTab({ transactions, allowDelete, allowEdit }
             <thead>
               <tr>
                 <th>Date</th>
-                <th>Type</th>
+                <th>Category</th>
                 <th>Amount</th>
                 <th>Notes</th>
-                <th className="col-tithing">Tithing Applies</th>
                 {showActions && <th>Actions</th>}
               </tr>
             </thead>
@@ -141,17 +159,14 @@ export default function TransactionsTab({ transactions, allowDelete, allowEdit }
                 <tr key={t.id}>
                   <td className="td-date">{formatDate(t.date)}</td>
                   <td>
-                    <span className={`type-badge type-badge--${t.type}`}>
-                      {t.type === 'deposit' ? 'Deposit' : 'Withdrawal'}
+                    <span className={`type-badge type-badge--${t.category.toLowerCase()}`}>
+                      {t.category}
                     </span>
                   </td>
-                  <td className={`td-amount td-amount--${t.type}`}>
-                    {t.type === 'withdrawal' ? '−' : '+'}{formatMoney(t.amount)}
+                  <td className={`td-amount td-amount--${t.category === 'Income' ? 'income' : 'withdrawal'}`}>
+                    {t.category !== 'Income' ? '−' : '+'}{formatMoney(t.amount)}
                   </td>
                   <td className="td-notes">{t.notes || '—'}</td>
-                  <td className="td-center col-tithing">
-                    {t.tithingApplies === null ? '—' : t.tithingApplies ? 'Yes' : 'No'}
-                  </td>
                   {showActions && (
                     <td className="td-actions">
                       {allowEdit   && <button className="btn-action btn-action--edit">Edit</button>}

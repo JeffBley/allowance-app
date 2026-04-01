@@ -64,7 +64,8 @@ module keyVault './modules/keyVault.bicep' = {
     location: location
     tags: tags
     name: 'kv-${take(resourceToken, 16)}'
-    cosmosDbConnectionString: cosmosDb.outputs.connectionString
+    // Cosmos DB connection string is no longer stored here.
+    // The Function App connects to Cosmos via managed identity.
   }
 }
 
@@ -97,10 +98,26 @@ module functionApp './modules/functionApp.bicep' = {
     name: 'func-allow-${take(resourceToken, 12)}'
     storageAccountName: 'st${take(resourceToken, 16)}'
     keyVaultName: keyVault.outputs.name
-    cosmosDbConnectionStringSecretUri: keyVault.outputs.cosmosDbSecretUri
+    cosmosDbAccountName: cosmosDb.outputs.accountName
+    cosmosDbEndpoint: cosmosDb.outputs.endpoint
     swaHostname: staticWebApp.outputs.defaultHostname
     externalIdTenantId: externalIdTenantId
     externalIdClientId: externalIdClientId
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Azure Communication Services Email
+// ---------------------------------------------------------------------------
+
+module acsEmail './modules/acsEmail.bicep' = {
+  name: 'acsEmail'
+  scope: rg
+  params: {
+    location: location
+    tags: tags
+    name: take(resourceToken, 16)
+    functionAppPrincipalId: functionApp.outputs.principalId
   }
 }
 
@@ -121,3 +138,7 @@ output VITE_TENANT_ID string = externalIdTenantId
 output VITE_CLIENT_ID string = externalIdClientId
 @description('CIAM authority URL — always ends with trailing slash for External ID.')
 output VITE_AUTHORITY string = 'https://bleytech.ciamlogin.com/'
+
+// ACS Email — consumed by the postprovision hook to patch Function App settings
+output ACS_ENDPOINT string = 'https://${acsEmail.outputs.commServiceEndpoint}'
+output ACS_SENDER_ADDRESS string = acsEmail.outputs.senderAddress
