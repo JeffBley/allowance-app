@@ -43,7 +43,7 @@ export function getDatabase(): Database {
  * Returns a typed container reference.
  * @param name - One of: 'families' | 'users' | 'transactions' | 'auditLog' | 'inviteCodes'
  */
-export function getContainer(name: 'families' | 'users' | 'transactions' | 'auditLog' | 'inviteCodes') {
+export function getContainer(name: 'families' | 'users' | 'transactions' | 'auditLog' | 'inviteCodes' | 'chores') {
   return getDatabase().container(name);
 }
 

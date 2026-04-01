@@ -23,6 +23,22 @@ export interface Family extends CosmosDocument {
    * When absent the DEFAULT_MEMBER_LIMIT constant applies.
    */
   memberLimit?: number;
+  /** When true, admins can define chores and credit kids for completing them. */
+  choreBasedIncomeEnabled?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Chore
+// ---------------------------------------------------------------------------
+
+export interface Chore extends CosmosDocument {
+  /** Discriminator so chore documents can be queried within the chores container */
+  name: string;
+  /** Dollar value of the chore */
+  amount: number;
+  /** oid of admin who created this chore */
+  createdBy: string;
+  createdAt: string; // ISO 8601
 }
 
 // ---------------------------------------------------------------------------
@@ -222,6 +238,27 @@ export interface PurgeTransactionsRequest {
    * will be purged. Transactions on or after this date are kept.
    */
   beforeDate: string;
+}
+
+export interface CreateChoreRequest {
+  name: string;
+  amount: number;
+}
+
+export interface UpdateChoreRequest {
+  name?: string;
+  amount?: number;
+}
+
+export interface CompleteChoreRequest {
+  kidOid: string;
+  tithable: boolean;
+  /** ISO 8601 date to use for the transaction; defaults to today if absent */
+  date?: string;
+}
+
+export interface UpdateFamilySettingsRequest {
+  choreBasedIncomeEnabled: boolean;
 }
 
 /** Standard API error shape */

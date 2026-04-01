@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { FamilyData, KidView, Transaction, AuditLogEntry } from '../../data/mockData'
+import type { FamilyData, KidView, Transaction, AuditLogEntry, Chore } from '../../data/mockData'
 import AdminSummaryTab from './AdminSummaryTab'
 import AdminFamilyMembersTab from './AdminFamilyMembersTab'
 import AdminTransactionsTab from './AdminTransactionsTab'
@@ -21,12 +21,13 @@ interface Props {
   kidViews: KidView[]
   allTransactions: Transaction[]
   auditLog: AuditLogEntry[]
+  chores: Chore[]
   onDataChange: () => void
   /** Silently re-fetches /api/family so newly joined members appear in kid list */
   onRefreshFamily: () => void
 }
 
-export default function AdminApp({ familyData, kidViews, allTransactions, auditLog, onDataChange, onRefreshFamily }: Props) {
+export default function AdminApp({ familyData, kidViews, allTransactions, auditLog, chores, onDataChange, onRefreshFamily }: Props) {
   const [activeTab, setActiveTab]               = useState<AdminTab>('summary')
   const [pendingTab, setPendingTab]             = useState<AdminTab | null>(null)
   const [familyTabHasUnsaved, setFamilyTabHasUnsaved] = useState(false)
@@ -95,7 +96,12 @@ export default function AdminApp({ familyData, kidViews, allTransactions, auditL
 
       <main className="tab-content">
         {activeTab === 'summary' && (
-          <AdminSummaryTab kids={kidViews} onDataChange={onDataChange} />
+          <AdminSummaryTab
+            kids={kidViews}
+            choreBasedIncomeEnabled={familyData.choreBasedIncomeEnabled}
+            chores={chores}
+            onDataChange={onDataChange}
+          />
         )}
         {activeTab === 'family-members' && (
           <AdminFamilyMembersTab
@@ -120,6 +126,7 @@ export default function AdminApp({ familyData, kidViews, allTransactions, auditL
             members={familyData.members}
             memberCount={familyData.members.length}
             memberLimit={familyData.memberLimit}
+            choreBasedIncomeEnabled={familyData.choreBasedIncomeEnabled}
             onDataChange={onDataChange}
             onMemberCreated={onRefreshFamily}
           />

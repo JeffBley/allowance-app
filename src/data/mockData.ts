@@ -58,7 +58,19 @@ export interface FamilyData {
   currentUserRole: UserRole
   /** Maximum members allowed in this family (default 10, adjustable by SuperAdmin). */
   memberLimit: number
+  /** When true, chore-based income feature is enabled for this family. */
+  choreBasedIncomeEnabled: boolean
   members: FamilyMember[]
+}
+
+/** Chore definition from GET /api/chores */
+export interface Chore {
+  id: string
+  familyId: string
+  name: string
+  amount: number
+  createdBy: string
+  createdAt: string
 }
 
 /** Invite code shape from GET /api/invites and POST /api/invites */

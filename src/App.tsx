@@ -4,7 +4,7 @@ import { InteractionRequiredAuthError } from '@azure/msal-browser'
 import { useApi } from './hooks/useApi'
 import { getDisplayName, getSignInEmail, parseAccessTokenClaims, apiTokenRequest } from './auth/msalConfig'
 import { useIsSuperAdmin } from './hooks/useAppRole'
-import type { FamilyData, KidView, AuditLogEntry, Transaction } from './data/mockData'
+import type { FamilyData, KidView, AuditLogEntry, Transaction, Chore } from './data/mockData'
 import { computeKidView } from './data/mockData'
 import UserApp from './components/user/UserApp'
 import AdminApp from './components/admin/AdminApp'
@@ -22,6 +22,7 @@ export default function App() {
   const [familyData, setFamilyData]   = useState<FamilyData | null>(null)
   const [allTxns, setAllTxns]         = useState<Transaction[]>([])
   const [auditLog, setAuditLog]       = useState<AuditLogEntry[]>([])
+  const [chores, setChores]           = useState<Chore[]>([])
   const [loading, setLoading]         = useState(true)
   const [errorCode, setErrorCode]     = useState<string | null>(null)
   const retryTimerRef                 = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -55,6 +56,10 @@ export default function App() {
             promises.push(
               apiFetch<{ entries: AuditLogEntry[] }>('audit-log')
                 .then(r => setAuditLog(r.entries))
+            )
+            promises.push(
+              apiFetch<{ chores: Chore[] }>('chores')
+                .then(r => setChores(r.chores))
             )
           }
           return Promise.all(promises)
@@ -207,8 +212,9 @@ export default function App() {
           kidViews={kidViews}
           allTransactions={allTxns}
           auditLog={auditLog}
+          chores={chores}
           onDataChange={() => {
-            // Refresh transactions, family data, and audit log
+            // Refresh transactions, family data, audit log, and chores
             return Promise.all([
               apiFetch<{ transactions: Transaction[] }>('transactions')
                 .then(r => setAllTxns(r.transactions)),
@@ -216,6 +222,8 @@ export default function App() {
                 .then(data => setFamilyData(data)),
               apiFetch<{ entries: AuditLogEntry[] }>('audit-log')
                 .then(r => setAuditLog(r.entries)),
+              apiFetch<{ chores: Chore[] }>('chores')
+                .then(r => setChores(r.chores)),
             ]).catch(console.error)
           }}
           onRefreshFamily={() => {

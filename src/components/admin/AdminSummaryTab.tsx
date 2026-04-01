@@ -1,9 +1,12 @@
 import { useState } from 'react'
-import type { KidView } from '../../data/mockData'
+import type { KidView, Chore } from '../../data/mockData'
 import AddTransactionWizard from '../user/AddTransactionWizard'
+import AdminChoresSection from './AdminChoresSection'
 
 interface Props {
   kids: KidView[]
+  choreBasedIncomeEnabled: boolean
+  chores: Chore[]
   onDataChange: () => void | Promise<unknown>
 }
 
@@ -29,7 +32,7 @@ function formatMoney(amount: number): string {
   return `$${amount.toFixed(2)}`
 }
 
-export default function AdminSummaryTab({ kids, onDataChange }: Props) {
+export default function AdminSummaryTab({ kids, choreBasedIncomeEnabled, chores, onDataChange }: Props) {
   const [wizardKid, setWizardKid] = useState<KidView | null>(null)
   const [refreshing, setRefreshing] = useState(false)
 
@@ -108,6 +111,14 @@ export default function AdminSummaryTab({ kids, onDataChange }: Props) {
         <AddTransactionWizard
           kid={wizardKid}
           onClose={() => { setWizardKid(null); onDataChange() }}
+        />
+      )}
+
+      {choreBasedIncomeEnabled && (
+        <AdminChoresSection
+          chores={chores}
+          kids={kids}
+          onChoresChange={onDataChange}
         />
       )}
     </div>
