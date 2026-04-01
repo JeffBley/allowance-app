@@ -111,7 +111,10 @@ function CompleteChoreModal({ chore, kids, onClose, onComplete }: CompleteModalP
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const today = new Date().toISOString().slice(0, 10)
+  // Use local date so the transaction is credited on the correct calendar day
+  // regardless of the user's timezone (UTC offset can shift the date by ±1 day).
+  const now = new Date()
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -119,6 +122,7 @@ function CompleteChoreModal({ chore, kids, onClose, onComplete }: CompleteModalP
     setSubmitting(true)
     setError(null)
     try {
+      // 1. Credit the income transaction
       await apiFetch('transactions', {
         method: 'POST',
         body: JSON.stringify({
@@ -130,6 +134,8 @@ function CompleteChoreModal({ chore, kids, onClose, onComplete }: CompleteModalP
           tithable,
         }),
       })
+      // 2. Delete the chore so it disappears from the list
+      await apiFetch(`chores/${chore.id}`, { method: 'DELETE' })
       onComplete()
     } catch (err) {
       const body = (err as { body?: { message?: string } })?.body
