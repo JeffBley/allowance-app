@@ -193,7 +193,9 @@ interface ChoreRowProps {
 
 function ChoreRow({ chore, onComplete, onEdit, onDelete }: ChoreRowProps) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
 
   // Close menu on outside click
   useEffect(() => {
@@ -207,21 +209,35 @@ function ChoreRow({ chore, onComplete, onEdit, onDelete }: ChoreRowProps) {
     return () => document.removeEventListener('mousedown', handler)
   }, [menuOpen])
 
+  function handleOpenMenu() {
+    if (menuOpen) { setMenuOpen(false); return }
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect()
+      setMenuPos({ top: r.bottom + 4, right: window.innerWidth - r.right })
+    }
+    setMenuOpen(true)
+  }
+
   return (
     <div className="chore-row">
       <span className="chore-row__name">{chore.name}</span>
       <span className="chore-row__amount">{fmt(chore.amount)}</span>
       <div className="chore-row__menu-wrap" ref={menuRef}>
         <button
+          ref={btnRef}
           className="chore-row__menu-btn"
-          onClick={() => setMenuOpen(o => !o)}
+          onClick={handleOpenMenu}
           aria-label="Chore options"
           aria-expanded={menuOpen}
         >
           •••
         </button>
-        {menuOpen && (
-          <div className="chore-menu" role="menu">
+        {menuOpen && menuPos && (
+          <div
+            className="chore-menu"
+            role="menu"
+            style={{ position: 'fixed', top: menuPos.top, right: menuPos.right, left: 'auto' }}
+          >
             <button
               className="chore-menu__item chore-menu__item--complete"
               role="menuitem"

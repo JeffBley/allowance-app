@@ -1710,15 +1710,12 @@ body {
 }
 
 .chore-menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
   min-width: 130px;
-  z-index: 100;
+  z-index: 1000;
   overflow: hidden;
 }
 
