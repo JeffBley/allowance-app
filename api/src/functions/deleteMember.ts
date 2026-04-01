@@ -60,10 +60,13 @@ async function deleteMember(request: HttpRequest, context: InvocationContext): P
       .fetchAll();
 
     // Compute last known balance and tithingOwed using integer-cent arithmetic to
-    // prevent floating-point drift across many transactions (mirrors computeKidView in the frontend)
+    // prevent floating-point drift across many transactions (mirrors computeKidView in the frontend).
+    // Use createdAt (server write time) vs balanceOverrideAt (full datetime) so that
+    // transactions created AFTER the override are included, while those created before
+    // (e.g. an allowance paid before the admin set the override floor) are excluded.
     const ks = user.kidSettings;
-    const overrideDate = ks?.balanceOverrideAt ? ks.balanceOverrideAt.slice(0, 10) : null;
-    const txnsForBalance = overrideDate ? txns.filter(t => t.date.slice(0, 10) > overrideDate) : txns;
+    const overrideAt = ks?.balanceOverrideAt ?? null;
+    const txnsForBalance = overrideAt ? txns.filter(t => (t.createdAt ?? t.date) > overrideAt) : txns;
 
     const balanceCents =
       Math.round((ks?.balanceOverride    ?? 0) * 100) +
