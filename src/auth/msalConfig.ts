@@ -9,11 +9,12 @@ import { PublicClientApplication, EventType } from '@azure/msal-browser';
 // For production, AZD injects these from Bicep outputs during `azd deploy`.
 //
 // Security decisions:
-//   - cacheLocation: 'sessionStorage'  → tokens don't persist across browser tabs
-//     and are cleared when the browser tab is closed. localStorage would persist
-//     across sessions but increases XSS exposure window.
-//   - storeAuthStateInCookie: false     → cookies add complexity; session storage
-//     is sufficient for this app.
+//   - cacheLocation: 'localStorage'    → persists across tabs and survives the
+//     redirect cycle on mobile browsers (iOS Safari ITP clears sessionStorage
+//     during cross-origin redirects, causing PKCE state loss and AADSTS165000).
+//     XSS exposure window is slightly larger than sessionStorage, but the app
+//     already runs on HTTPS-only SWA and CSP headers reduce that risk.
+//   - storeAuthStateInCookie: removed in MSAL Browser v4/v5.
 //   - Auth Code + PKCE is enforced by MSAL v2+ for public clients (no client secret).
 // ---------------------------------------------------------------------------
 
@@ -41,14 +42,17 @@ export const msalConfig: Configuration = {
     postLogoutRedirectUri: `${window.location.origin}/`,
   },
   cache: {
-    // sessionStorage: tokens cleared when tab closes, reducing XSS exposure window
-    // vs localStorage which persists across sessions.
+    // localStorage: survives the cross-origin redirect cycle on mobile browsers.
+    // iOS Safari (ITP) clears sessionStorage when navigating to an external origin
+    // (bleytech.ciamlogin.com) and back, destroying the PKCE code_verifier/state
+    // and causing AADSTS165000 "Token was not provided" on return. localStorage
+    // is not cleared by ITP during redirects.
     //
     // Note: MSAL Browser v5 removed storeAuthStateInCookie (was a v2/v3 option).
     // The "state is missing" error on browser restore is handled in main.tsx by
     // catching no_token_request_cache_error and similar, cleaning the URL, and
     // silently falling back to the sign-in screen.
-    cacheLocation: 'sessionStorage',
+    cacheLocation: 'localStorage',
   },
 };
 
