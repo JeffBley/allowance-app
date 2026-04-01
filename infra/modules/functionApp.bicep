@@ -194,6 +194,9 @@ resource appSettings 'Microsoft.Web/sites/config@2023-12-01' = {
     EXTERNAL_ID_TENANT_ID: externalIdTenantId
     EXTERNAL_ID_CLIENT_ID: externalIdClientId
     EXTERNAL_ID_AUTHORITY: 'https://bleytech.ciamlogin.com/'
+
+    // App URL — used to build invite deep-links in outbound emails
+    APP_URL: 'https://${swaHostname}'
   }
   dependsOn: [cosmosDataContributorRole, storageBlobRole]
 }
