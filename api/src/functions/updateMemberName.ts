@@ -2,6 +2,8 @@ import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/fu
 import { validateBearerToken, UNAUTHORIZED, FORBIDDEN } from '../middleware/auth.js';
 import { resolveFamilyScope, NOT_ENROLLED } from '../middleware/familyScope.js';
 import { getContainer } from '../data/cosmosClient.js';
+import type { AuditLogEntry } from '../data/models.js';
+import { randomUUID } from 'node:crypto';
 
 // ---------------------------------------------------------------------------
 // PATCH /api/members/:oid/name — update any family member's display name
@@ -13,7 +15,8 @@ import { getContainer } from '../data/cosmosClient.js';
 // Security controls:
 //   - Requires a valid Entra JWT (caller must be FamilyAdmin)
 //   - Target oid is validated to belong to the caller's family (no cross-family writes)
-//   - displayName is server-side trimmed and bounded to 1-60 chars
+//   - displayName is server-side trimmed, control characters stripped, and bounded to 1-60 chars
+//   - Rename is recorded in the auditLog container (non-fatal)
 // ---------------------------------------------------------------------------
 
 interface UpdateNameRequest {
@@ -44,7 +47,7 @@ async function updateMemberName(request: HttpRequest, context: InvocationContext
   }
 
   const displayName = typeof body?.displayName === 'string'
-    ? body.displayName.trim().replace(/\s+/g, ' ')
+    ? body.displayName.trim().replace(/[\x00-\x1f\x7f]/g, '').replace(/\s+/g, ' ')
     : '';
 
   if (!displayName || displayName.length > 60) {
@@ -68,6 +71,26 @@ async function updateMemberName(request: HttpRequest, context: InvocationContext
     await usersContainer.item(targetOid, scope.familyId).patch([
       { op: 'replace', path: '/displayName', value: displayName },
     ]);
+
+    // Write audit log entry — non-fatal (same pattern as editTransaction/deleteTransaction).
+    // Captures old and new names for the audit trail.
+    try {
+      const performedByEmail = typeof auth.payload['email'] === 'string' ? auth.payload['email'] : undefined;
+      const auditEntry: AuditLogEntry = {
+        id:                   randomUUID(),
+        familyId:             scope.familyId,
+        action:               'member_rename',
+        performedBy:          auth.payload.oid,
+        performedByEmail,
+        timestamp:            new Date().toISOString(),
+        subjectOid:           targetOid,
+        previousDisplayName:  targetUser.displayName,
+        memberDisplayName:    displayName,
+      };
+      await getContainer('auditLog').items.create(auditEntry);
+    } catch (auditErr) {
+      context.warn(`updateMemberName: audit log write failed for member ${targetOid} — rename succeeded`, auditErr);
+    }
 
     context.log(`updateMemberName: admin ${auth.payload.oid} renamed member ${targetOid} → '${displayName}'`);
     return { status: 204 };

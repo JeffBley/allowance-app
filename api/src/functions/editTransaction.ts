@@ -47,6 +47,15 @@ async function editTransaction(request: HttpRequest, context: InvocationContext)
     return { status: 400, jsonBody: { code: 'INVALID_CATEGORY', message: 'category must be Income, Purchase, or Tithing.' } };
   }
 
+  // Validate and normalize date if provided (KI-0066)
+  let normalizedDate: string | undefined;
+  if (body.date) {
+    if (isNaN(Date.parse(body.date))) {
+      return { status: 400, jsonBody: { code: 'INVALID_DATE', message: 'date must be a valid ISO 8601 string.' } };
+    }
+    normalizedDate = new Date(body.date).toISOString();
+  }
+
   try {
     const txnContainer = getContainer('transactions');
 
@@ -71,7 +80,7 @@ async function editTransaction(request: HttpRequest, context: InvocationContext)
       ...(body.category && { category: body.category }),
       ...(body.amount != null && { amount: body.amount }),
       ...(body.notes != null && { notes: body.notes }),
-      ...(body.date && { date: body.date }),
+      ...(normalizedDate !== undefined && { date: normalizedDate }),
       // tithable only applies to Income; preserve existing value when not in body
       ...(body.category === 'Income' || (!body.category && existing.category === 'Income')
         ? { tithable: body.tithable !== undefined ? body.tithable : existing.tithable }

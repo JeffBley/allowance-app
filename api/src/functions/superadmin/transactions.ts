@@ -36,6 +36,7 @@ async function addTransaction(
   if (isNaN(Date.parse(body.date))) {
     return { status: 400, jsonBody: { code: 'INVALID_DATE', message: 'date must be a valid ISO 8601 string.' } };
   }
+  const normalizedDate = new Date(body.date).toISOString();
   if (body.notes && body.notes.length > 500) {
     return { status: 400, jsonBody: { code: 'INVALID_NOTES', message: 'notes must be 500 characters or fewer.' } };
   }
@@ -56,7 +57,7 @@ async function addTransaction(
       category:  body.category,
       amount:    body.amount,
       notes:     body.notes ?? '',
-      date:      body.date,
+      date:      normalizedDate,
       tithable:  body.category === 'Income' ? (body.tithable !== false) : undefined,
       createdBy: session.method === 'sso' && session.oid ? `superadmin:${session.oid}` : 'superadmin:bootstrap',
       createdAt: now,

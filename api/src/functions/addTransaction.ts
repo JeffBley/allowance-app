@@ -43,10 +43,13 @@ async function addTransaction(request: HttpRequest, context: InvocationContext):
     return { status: 400, jsonBody: { code: 'INVALID_AMOUNT', message: 'amount must be a positive number no greater than 100,000.' } };
   }
 
-  // Validate date is a parseable ISO 8601 string
+  // Validate date is a parseable ISO 8601 string; normalize to full UTC ISO 8601 to
+  // prevent non-zero-padded values (e.g. "2025-1-5") from breaking slice(0,10) comparisons
+  // in computeKidView and deleteMember.ts (KI-0066).
   if (isNaN(Date.parse(body.date))) {
     return { status: 400, jsonBody: { code: 'INVALID_DATE', message: 'date must be a valid ISO 8601 string.' } };
   }
+  const normalizedDate = new Date(body.date).toISOString();
 
   // Validate notes length
   if (body.notes && body.notes.length > 500) {
@@ -71,7 +74,7 @@ async function addTransaction(request: HttpRequest, context: InvocationContext):
       category: body.category,
       amount: body.amount,
       notes: body.notes ?? '',
-      date: body.date,
+      date: normalizedDate,
       // tithable is only meaningful for Income; defaults to true when absent
       tithable: body.category === 'Income' ? (body.tithable !== false) : undefined,
       createdBy: auth.payload.oid,

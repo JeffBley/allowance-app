@@ -172,9 +172,13 @@ async function sendInviteEmail(request: HttpRequest, context: InvocationContext)
     };
 
     const poller = await emailClient.beginSend(message);
-    await poller.pollUntilDone();
 
+    // Record the send attempt BEFORE awaiting completion so that even if
+    // pollUntilDone() throws (ACS transient failure), the rate window is still
+    // consumed and a rapid retry is throttled (KI-0068).
     lastSentAt.set(code, Date.now());
+
+    await poller.pollUntilDone();
     context.log(`sendInviteEmail: sent invite email for code '${code}' to '${recipientEmail}'`);
 
     return { status: 200, jsonBody: { message: 'Invite email sent.' } };

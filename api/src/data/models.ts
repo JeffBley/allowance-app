@@ -138,7 +138,7 @@ export interface Transaction extends CosmosDocument {
 // Audit Log
 // ---------------------------------------------------------------------------
 
-export type AuditAction = 'edit' | 'delete' | 'member_delete';
+export type AuditAction = 'edit' | 'delete' | 'member_delete' | 'member_rename';
 
 export interface AuditLogEntry extends CosmosDocument {
   action: AuditAction;
@@ -171,6 +171,9 @@ export interface AuditLogEntry extends CosmosDocument {
   lastTithingOwed?: number;
   /** Number of transactions deleted alongside the member */
   transactionCount?: number;
+  // Fields present only for 'member_rename' action:
+  /** Display name before the rename */
+  previousDisplayName?: string;
 }
 
 // ---------------------------------------------------------------------------

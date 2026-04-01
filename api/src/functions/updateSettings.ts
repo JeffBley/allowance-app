@@ -86,6 +86,11 @@ async function updateSettings(request: HttpRequest, context: InvocationContext):
       return { status: 404, jsonBody: { code: 'NOT_FOUND', message: 'Kid not found in this family.' } };
     }
 
+    // Only User-role members have kidSettings; prevent accidental writes to FamilyAdmin records.
+    if (kidUser.role !== 'User') {
+      return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: 'kidOid must refer to a User-role member.' } };
+    }
+
     // Work on a mutable copy so we can patch fields server-side.
     const ks: KidSettings = { ...body.kidSettings };
 

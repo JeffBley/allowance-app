@@ -49,6 +49,12 @@ async function balanceOverride(request: HttpRequest, context: InvocationContext)
       return { status: 404, jsonBody: { code: 'NOT_FOUND', message: 'Kid not found in this family.' } };
     }
 
+    // Only User-role members have kidSettings; prevent balance override from being
+    // applied to a FamilyAdmin record (which has no kidSettings, causing silent data loss).
+    if (kidUser.role !== 'User') {
+      return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: 'kidOid must refer to a User-role member.' } };
+    }
+
     const overrideAt = new Date().toISOString();
 
     const updated: User = {
