@@ -4,26 +4,65 @@ import './index.css'
 import App from './App'
 import { AuthProvider, LoginGate, setAuthBootError } from './auth/AuthProvider'
 import { msalInstance } from './auth/msalConfig';
+import SuperAdminGate from './superadmin/SuperAdminGate';
 
 const root = createRoot(document.getElementById('app')!);
 
-// All paths — including /superadmin — go through MSAL auth.
-// Super admin UI is embedded inside App and gated by the SuperAdmin app role.
-// Initialize before rendering so:
-//   1. handleRedirectPromise() processes the auth code return from Entra
-//   2. The setActiveAccount callback (registered in msalConfig) fires in time
-//   3. useIsAuthenticated() has correct state on first render
-msalInstance.initialize()
-  .then(() => msalInstance.handleRedirectPromise())
-  .then(() => {
+// ---------------------------------------------------------------------------
+// Boot sequence
+//
+// Break-glass path (/superadmin + bootstrap enabled):
+//   When BOOTSTRAP_ADMIN_ENABLED=true, the /superadmin route renders
+//   SuperAdminGate directly — no MSAL sign-in required. This allows recovery
+//   when the owner is locked out of their Entra account. SuperAdminGate and
+//   the entire superadmin subtree use only saApi.ts (plain fetch + bootstrap
+//   session JWT) and have no MSAL dependencies, so MsalProvider is not needed.
+//
+// Normal path (all other routes, or /superadmin with bootstrap disabled):
+//   MSAL is initialized, handleRedirectPromise() processes any pending auth
+//   code return, then the app renders inside AuthProvider + LoginGate.
+// ---------------------------------------------------------------------------
+
+(async () => {
+  // ── Break-glass: check before touching MSAL ───────────────────────────────
+  if (window.location.pathname.startsWith('/superadmin')) {
+    try {
+      const apiBase = (import.meta.env['VITE_API_URL'] as string | undefined) ?? '';
+      const resp = await fetch(`${apiBase}/superadmin/status`);
+      if (resp.ok) {
+        const data = await resp.json() as { bootstrapEnabled: boolean };
+        if (data.bootstrapEnabled) {
+          // Bootstrap is on — render the secret-entry gate with no MSAL dependency.
+          root.render(
+            <StrictMode>
+              <SuperAdminGate />
+            </StrictMode>,
+          );
+          return; // Skip MSAL init entirely for this tab
+        }
+      }
+    } catch {
+      // Network error — fall through to normal MSAL-gated render.
+      // The SuperAdminGate will still be reachable via SSO after sign-in.
+    }
+  }
+
+  // ── Normal path: initialize MSAL ─────────────────────────────────────────
+  // Initialize before rendering so:
+  //   1. handleRedirectPromise() processes the auth code return from Entra
+  //   2. The setActiveAccount callback (registered in msalConfig) fires in time
+  //   3. useIsAuthenticated() has correct state on first render
+  try {
+    await msalInstance.initialize();
+    await msalInstance.handleRedirectPromise();
+
     // Fallback: if a cached account exists but none is active (e.g. page
     // refresh without a fresh login event), promote the first cached account.
     const accounts = msalInstance.getAllAccounts();
     if (accounts.length > 0 && !msalInstance.getActiveAccount()) {
       msalInstance.setActiveAccount(accounts[0]);
     }
-  })
-  .catch((err: unknown) => {
+  } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     const code = (err as { errorCode?: string })?.errorCode ?? '';
 
@@ -56,21 +95,20 @@ msalInstance.initialize()
     if (RECOVERABLE_CODES.includes(code)) {
       // Silently recover: user will see the sign-in screen and can log in fresh.
       console.warn('[boot] MSAL state mismatch on browser restore (expected):', code);
-      return;
+    } else {
+      // All other errors are genuine misconfigurations — surface them.
+      console.error('[boot] MSAL initialization error:', msg);
+      setAuthBootError(msg);
     }
+  }
 
-    // All other errors are genuine misconfigurations — surface them.
-    console.error('[boot] MSAL initialization error:', msg);
-    setAuthBootError(msg);
-  })
-  .finally(() => {
-    root.render(
-      <StrictMode>
-        <AuthProvider>
-          <LoginGate>
-            <App />
-          </LoginGate>
-        </AuthProvider>
-      </StrictMode>,
-    );
-  });
+  root.render(
+    <StrictMode>
+      <AuthProvider>
+        <LoginGate>
+          <App />
+        </LoginGate>
+      </AuthProvider>
+    </StrictMode>,
+  );
+})();
