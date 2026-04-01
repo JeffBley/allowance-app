@@ -59,7 +59,8 @@ async function redeemInvite(request: HttpRequest, context: InvocationContext): P
   }
 
   const code = body.code.toLowerCase().trim();
-  const displayName = body.displayName.trim();
+  // Strip ASCII control characters (consistent with localMembers.ts and superadmin/members.ts)
+  const displayName = body.displayName.trim().replace(/[\x00-\x1f\x7f]/g, '');
 
   try {
     const usersContainer  = getContainer('users');

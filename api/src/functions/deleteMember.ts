@@ -88,7 +88,23 @@ async function deleteMember(request: HttpRequest, context: InvocationContext): P
     );
     const lastTithingOwed = tithingOwedCents / 100;
 
-    await Promise.all(txns.map(t => txnContainer.item(t.id, scope.familyId).delete()));
+    // Delete all transactions. Promise.all rejects if any individual delete fails;
+    // on partial failure the outer catch returns 500 and the user record is left
+    // intact — the admin can retry. Log how many succeeded before the failure
+    // so any manually cleaned-up records are visible in the function logs.
+    let deletedCount = 0;
+    try {
+      await Promise.all(txns.map(async t => {
+        await txnContainer.item(t.id, scope.familyId).delete();
+        deletedCount++;
+      }));
+    } catch (txnDeleteErr) {
+      context.error(
+        `deleteMember: partial transaction delete failure after ${deletedCount}/${txns.length} deletes for member '${targetOid}'. User record NOT deleted.`,
+        txnDeleteErr,
+      );
+      throw txnDeleteErr; // Re-throw to outer catch → returns 500; user record stays intact.
+    }
     context.log(`deleteMember: removed ${txns.length} transaction(s) for member '${targetOid}'`);
 
     // Delete the user record

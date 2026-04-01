@@ -35,8 +35,11 @@ function checkRateLimit(ip: string): { allowed: boolean; retryAfterSecs: number 
 }
 
 function getClientIp(request: HttpRequest): string {
-  // Azure Functions sets x-forwarded-for; take only the first (client) address
-  const xff = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+  // Azure Functions appends the true connecting IP as the LAST entry in
+  // x-forwarded-for — the leftmost values are user-controlled and must not
+  // be trusted for security decisions. Using the rightmost value prevents
+  // an attacker from rotating their apparent IP to bypass the rate limiter.
+  const xff = request.headers.get('x-forwarded-for')?.split(',').at(-1)?.trim();
   return xff ?? request.headers.get('client-ip') ?? 'unknown';
 }
 

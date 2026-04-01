@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useMsal } from '@azure/msal-react'
 import { InteractionRequiredAuthError } from '@azure/msal-browser'
 import { useApi } from './hooks/useApi'
@@ -24,7 +24,7 @@ export default function App() {
   const [auditLog, setAuditLog]       = useState<AuditLogEntry[]>([])
   const [loading, setLoading]         = useState(true)
   const [errorCode, setErrorCode]     = useState<string | null>(null)
-  const [errorDetail, setErrorDetail] = useState<string | null>(null)
+  const retryTimerRef                 = useRef<ReturnType<typeof setTimeout> | null>(null)
   // null = "not chosen yet"; will show RolePicker for multi-role users
   const [activeView, setActiveView]   = useState<ActiveView | null>(null)
   // Name claims extracted from access token (optional claims may not be in ID token)
@@ -64,7 +64,7 @@ export default function App() {
       .then(() => setLoading(false))
       .catch(() => {
         // First attempt failed — wait 2 s for session propagation then retry once
-        setTimeout(() => {
+        retryTimerRef.current = setTimeout(() => {
           loadData()
             .then(() => setLoading(false))
             .catch((err: unknown) => {
@@ -73,16 +73,15 @@ export default function App() {
               } else {
                 console.error('[App] Failed to load family data:', err)
                 setErrorCode('error')
-                setErrorDetail(
-                  err instanceof Error
-                    ? err.message
-                    : (err as { body?: { message?: string } })?.body?.message ?? String(err)
-                )
               }
               setLoading(false)
             })
         }, 2000)
       })
+
+    return () => {
+      if (retryTimerRef.current !== null) clearTimeout(retryTimerRef.current)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -173,11 +172,9 @@ export default function App() {
         <div className="app-error__card">
           <h2>Something went wrong</h2>
           <p>Couldn&apos;t load account data. Please try refreshing.</p>
-          {errorDetail && (
-            <p style={{ fontSize: '0.8rem', color: '#64748b', wordBreak: 'break-word', marginTop: 8 }}>
-              <code>{errorDetail}</code>
-            </p>
-          )}
+          <p style={{ fontSize: '0.8rem', color: '#64748b', marginTop: 8 }}>
+            If the problem persists, sign out and sign back in.
+          </p>
           <button className="btn btn-secondary" onClick={handleSignOut}>Sign out</button>
         </div>
       </div>

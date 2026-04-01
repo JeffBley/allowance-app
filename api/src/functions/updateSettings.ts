@@ -54,9 +54,9 @@ async function updateSettings(request: HttpRequest, context: InvocationContext):
     return { status: 400, jsonBody: { code: 'INVALID_SETTINGS', message: `'${ks.timezone}' is not a valid IANA timezone identifier.` } };
   }
 
-  // Validate optional timeOfDay (HH:MM in 24-hour format)
-  if (ks.timeOfDay !== undefined && !/^\d{2}:\d{2}$/.test(ks.timeOfDay)) {
-    return { status: 400, jsonBody: { code: 'INVALID_SETTINGS', message: 'timeOfDay must be in HH:MM format.' } };
+  // Validate optional timeOfDay (HH:MM in strict 24-hour format — rejects 25:61 etc.)
+  if (ks.timeOfDay !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(ks.timeOfDay)) {
+    return { status: 400, jsonBody: { code: 'INVALID_SETTINGS', message: 'timeOfDay must be a valid 24-hour time in HH:MM format (00:00–23:59).' } };
   }
 
   // Validate optional dayOfWeek (0 = Sunday … 6 = Saturday)

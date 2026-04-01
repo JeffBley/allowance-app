@@ -36,7 +36,10 @@ async function updateProfile(request: HttpRequest, context: InvocationContext): 
     return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: 'Request body must be valid JSON.' } };
   }
 
-  const displayName = typeof body?.displayName === 'string' ? body.displayName.trim() : '';
+  // Strip ASCII control characters (consistent with localMembers.ts and superadmin/members.ts)
+  const displayName = typeof body?.displayName === 'string'
+    ? body.displayName.trim().replace(/[\x00-\x1f\x7f]/g, '')
+    : '';
   if (!displayName || displayName.length > 60) {
     return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: '\'displayName\' must be 1-60 characters.' } };
   }
