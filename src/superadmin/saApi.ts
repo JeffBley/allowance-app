@@ -333,3 +333,22 @@ export async function purgeTransactions(
     { method: 'POST', body: JSON.stringify(payload) },
   )
 }
+
+// ---------------------------------------------------------------------------
+// Purge Audit Log
+// ---------------------------------------------------------------------------
+
+export interface PurgeAuditLogResult {
+  purgedCount: number
+  skippedCount: number
+}
+
+export async function purgeAuditLog(
+  familyId: string,
+  beforeDate: string,
+): Promise<PurgeAuditLogResult> {
+  return apiFetch(
+    `superadmin/families/${encodeURIComponent(familyId)}/purge-audit-log`,
+    { method: 'POST', body: JSON.stringify({ beforeDate }) },
+  )
+}

@@ -3,10 +3,10 @@ import {
   getFamily, updateFamily, deleteFamily,
   createMember, createLocalMember, updateMember, deleteMember,
   listInvites, generateInvite, revokeInvite, sendInviteEmail,
-  addTransaction, purgeTransactions,
+  purgeTransactions, purgeAuditLog,
   SaApiError,
   type SaFamily, type SaMember, type CreateMemberPayload, type SaInviteCode, type GenerateInvitePayload,
-  type AddTransactionPayload, type PurgeTransactionsResult,
+  type PurgeTransactionsResult, type PurgeAuditLogResult,
 } from './saApi'
 
 interface Props {
@@ -14,63 +14,24 @@ interface Props {
   onBack: () => void
 }
 
-type MemberFormState = Omit<CreateMemberPayload, 'kidSettings'> & {
-  allowanceEnabled: boolean
-  allowanceAmount: string
-  allowanceFrequency: string
-  dayOfWeek: string
-  timeOfDay: string
-  timezone: string
+type MemberFormState = {
+  oid: string
+  displayName: string
+  role: 'User' | 'FamilyAdmin'
 }
 
 const EMPTY_FORM: MemberFormState = {
   oid: '',
   displayName: '',
   role: 'User',
-  allowanceEnabled: false,
-  allowanceAmount: '5',
-  allowanceFrequency: 'Weekly',
-  dayOfWeek: '5',
-  timeOfDay: '08:00',
-  timezone: 'America/Chicago',
 }
 
-const DAYS_OF_WEEK = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
-const FREQUENCIES  = ['Weekly','Bi-weekly','Monthly']
-const TIMEZONES    = [
-  { label: 'Eastern (ET)',  value: 'America/New_York'    },
-  { label: 'Central (CT)',  value: 'America/Chicago'     },
-  { label: 'Mountain (MT)', value: 'America/Denver'      },
-  { label: 'AZ (no DST)',   value: 'America/Phoenix'     },
-  { label: 'Pacific (PT)',  value: 'America/Los_Angeles' },
-  { label: 'Alaska (AKT)', value: 'America/Anchorage'   },
-  { label: 'Hawaii (HT)',   value: 'Pacific/Honolulu'    },
-]
-
 function buildPayload(form: MemberFormState): CreateMemberPayload {
-  const base: CreateMemberPayload = {
+  return {
     oid:         form.oid.trim(),
     displayName: form.displayName.trim(),
     role:        form.role,
   }
-  if (form.role === 'User' && form.allowanceEnabled) {
-    base.kidSettings = {
-      allowanceEnabled:   true,
-      allowanceAmount:    parseFloat(form.allowanceAmount) || 0,
-      allowanceFrequency: form.allowanceFrequency,
-      dayOfWeek:          parseInt(form.dayOfWeek, 10),
-      timeOfDay:          form.timeOfDay,
-      timezone:           form.timezone,
-    }
-  } else if (form.role === 'User') {
-    base.kidSettings = {
-      allowanceEnabled:   false,
-      allowanceAmount:    parseFloat(form.allowanceAmount) || 0,
-      allowanceFrequency: form.allowanceFrequency,
-      timezone:           form.timezone,
-    }
-  }
-  return base
 }
 
 export default function FamilyDetail({ familyId, onBack }: Props) {
@@ -90,7 +51,7 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
   const [savingLimit, setSavingLimit]     = useState(false)
   const [limitError, setLimitError]       = useState<string | null>(null)
 
-  // Add / edit member form
+  // Add / edit member form (OID-based)
   const [showMemberForm, setShowMemberForm] = useState(false)
   const [editingMember, setEditingMember]   = useState<SaMember | null>(null)
   const [form, setForm]                     = useState<MemberFormState>(EMPTY_FORM)
@@ -101,51 +62,46 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
   const [confirmDeleteMember, setConfirmDeleteMember] = useState<SaMember | null>(null)
   const [deletingMember, setDeletingMember]           = useState<string | null>(null)
 
-  // Add Member wizard
+  // Add Member wizard (matches family admin flow)
   const [showAddMemberWizard, setShowAddMemberWizard] = useState(false)
-  const [addMemberMode, setAddMemberMode]             = useState<'choose' | 'local' | 'entra'>('choose')
+  const [addMemberMode, setAddMemberMode]             = useState<'choose' | 'local' | 'invite'>('choose')
   const [localMemberName, setLocalMemberName]         = useState('')
   const [creatingLocalMember, setCreatingLocalMember] = useState(false)
   const [localMemberError, setLocalMemberError]       = useState<string | null>(null)
+  // Invite wizard inside Add Member wizard
+  const [wizardInviteRole, setWizardInviteRole]         = useState<'User' | 'FamilyAdmin'>('FamilyAdmin')
+  const [wizardInviteNameHint, setWizardInviteNameHint] = useState('')
+  const [wizardInviteEmail, setWizardInviteEmail]       = useState('')
+  const [wizardGenerating, setWizardGenerating]         = useState(false)
+  const [wizardSendingEmail, setWizardSendingEmail]     = useState(false)
+  const [wizardInviteError, setWizardInviteError]       = useState<string | null>(null)
 
   // Invite codes
   const [invites, setInvites]               = useState<SaInviteCode[]>([])
   const [invitesLoading, setInvitesLoading] = useState(false)
-  const [showInviteForm, setShowInviteForm] = useState(false)
-  const [inviteRole, setInviteRole]         = useState<'User' | 'FamilyAdmin'>('FamilyAdmin')
-  const [inviteNameHint, setInviteNameHint] = useState('')
-  const [generatingInvite, setGeneratingInvite] = useState(false)
-  const [inviteError, setInviteError]       = useState<string | null>(null)
-
-  // Purge transactions
-  const [purgeKidOid, setPurgeKidOid]         = useState<string>('')
-  const [purgeBeforeDate, setPurgeBeforeDate] = useState<string>('')
-  const [purgeSubmitting, setPurgeSubmitting] = useState(false)
-  const [purgeError, setPurgeError]           = useState<string | null>(null)
-  const [purgeResult, setPurgeResult]         = useState<PurgeTransactionsResult | null>(null)
-  const [showPurgeConfirm, setShowPurgeConfirm] = useState(false)
-  const [newCode, setNewCode]               = useState<SaInviteCode | null>(null)  // just-created code to display
+  const [newCode, setNewCode]               = useState<SaInviteCode | null>(null)
   const [revokingCode, setRevokingCode]     = useState<string | null>(null)
   const [confirmRevokeCode, setConfirmRevokeCode] = useState<SaInviteCode | null>(null)
   const [regeneratingCode, setRegeneratingCode]   = useState<string | null>(null)
 
-  // Email invite
+  // Email invite (on existing codes)
   const [emailInvite, setEmailInvite]   = useState<SaInviteCode | null>(null)
   const [emailAddress, setEmailAddress] = useState('')
   const [sendingEmail, setSendingEmail] = useState(false)
   const [emailError, setEmailError]     = useState<string | null>(null)
   const [emailSuccess, setEmailSuccess] = useState(false)
 
-  // Add transaction
-  const [showAddTxn, setShowAddTxn]           = useState(false)
-  const [addTxnKidOid, setAddTxnKidOid]       = useState('')
-  const [addTxnCategory, setAddTxnCategory]   = useState<AddTransactionPayload['category']>('Income')
-  const [addTxnDate, setAddTxnDate]           = useState(() => new Date().toISOString().split('T')[0])
-  const [addTxnAmount, setAddTxnAmount]       = useState('')
-  const [addTxnNotes, setAddTxnNotes]         = useState('')
-  const [addTxnTithable, setAddTxnTithable]   = useState(true)
-  const [addTxnSubmitting, setAddTxnSubmitting] = useState(false)
-  const [addTxnError, setAddTxnError]         = useState<string | null>(null)
+  // Purge Data wizard
+  type PurgeType = 'transactions' | 'audit-log'
+  type PurgeWizardStep = 'type' | 'date' | 'confirm'
+  const [showPurgeWizard, setShowPurgeWizard]     = useState(false)
+  const [purgeWizardStep, setPurgeWizardStep]     = useState<PurgeWizardStep>('type')
+  const [purgeType, setPurgeType]                 = useState<PurgeType>('transactions')
+  const [purgeKidOid, setPurgeKidOid]             = useState('')
+  const [purgeBeforeDate, setPurgeBeforeDate]     = useState('')
+  const [purgeSubmitting, setPurgeSubmitting]     = useState(false)
+  const [purgeError, setPurgeError]               = useState<string | null>(null)
+  const [purgeResult, setPurgeResult]             = useState<PurgeTransactionsResult | PurgeAuditLogResult | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -173,27 +129,6 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
   }, [familyId])
 
   useEffect(() => { load(); loadInvites() }, [load, loadInvites])
-
-  async function handleGenerateInvite(e: React.FormEvent) {
-    e.preventDefault()
-    setInviteError(null)
-    setGeneratingInvite(true)
-    try {
-      const payload: GenerateInvitePayload = {
-        role: inviteRole,
-        displayNameHint: inviteNameHint.trim() || undefined,
-      }
-      const created = await generateInvite(familyId, payload)
-      setNewCode(created)
-      setInvites(prev => [created, ...prev])
-      setShowInviteForm(false)
-      setInviteNameHint('')
-    } catch (err) {
-      setInviteError(err instanceof SaApiError ? err.message : 'Failed to generate invite.')
-    } finally {
-      setGeneratingInvite(false)
-    }
-  }
 
   async function handleRevokeInvite(invite: SaInviteCode) {
     setRevokingCode(invite.code)
@@ -238,49 +173,6 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
       setEmailError(err instanceof SaApiError ? err.message : 'Failed to send email.')
     } finally {
       setSendingEmail(false)
-    }
-  }
-
-  function openAddTxn() {
-    const firstKid = members.find(m => m.role === 'User')
-    setAddTxnKidOid(firstKid?.oid ?? '')
-    setAddTxnCategory('Income')
-    setAddTxnDate(new Date().toISOString().split('T')[0])
-    setAddTxnAmount('')
-    setAddTxnNotes('')
-    setAddTxnTithable(true)
-    setAddTxnError(null)
-    setShowAddTxn(true)
-  }
-
-  async function handleAddTxn(e: React.FormEvent) {
-    e.preventDefault()
-    setAddTxnError(null)
-    const amount = parseFloat(addTxnAmount)
-    if (isNaN(amount) || amount <= 0) {
-      setAddTxnError('Amount must be a positive number.')
-      return
-    }
-    if (!addTxnKidOid) {
-      setAddTxnError('Please select a child.')
-      return
-    }
-    setAddTxnSubmitting(true)
-    try {
-      const payload: AddTransactionPayload = {
-        kidOid:   addTxnKidOid,
-        category: addTxnCategory,
-        amount,
-        date:     addTxnDate,
-        notes:    addTxnNotes.trim(),
-        ...(addTxnCategory === 'Income' && { tithable: addTxnTithable }),
-      }
-      await addTransaction(familyId, payload)
-      setShowAddTxn(false)
-    } catch (err) {
-      setAddTxnError(err instanceof SaApiError ? err.message : 'Failed to add transaction.')
-    } finally {
-      setAddTxnSubmitting(false)
     }
   }
 
@@ -329,18 +221,11 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
   }
 
   function openEditMember(m: SaMember) {
-    const ks = m.kidSettings as Record<string, unknown> | undefined
     setEditingMember(m)
     setForm({
-      oid:               m.oid,
-      displayName:       m.displayName,
-      role:              m.role,
-      allowanceEnabled:  Boolean(ks?.allowanceEnabled),
-      allowanceAmount:   String(ks?.allowanceAmount ?? '5'),
-      allowanceFrequency: String(ks?.allowanceFrequency ?? 'Weekly'),
-      dayOfWeek:         String(ks?.dayOfWeek ?? '5'),
-      timeOfDay:         String(ks?.timeOfDay ?? '08:00'),
-      timezone:          String(ks?.timezone ?? 'America/Chicago'),
+      oid:         m.oid,
+      displayName: m.displayName,
+      role:        m.role,
     })
     setFormError(null)
     setShowMemberForm(true)
@@ -350,6 +235,97 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
     setShowMemberForm(false)
     setEditingMember(null)
     setFormError(null)
+  }
+
+  // Invite wizard handlers (used inside Add Member wizard)
+  async function handleWizardGenerateCodeOnly(e: React.FormEvent) {
+    e.preventDefault()
+    setWizardInviteError(null)
+    setWizardGenerating(true)
+    try {
+      const payload: GenerateInvitePayload = {
+        role: wizardInviteRole,
+        displayNameHint: wizardInviteNameHint.trim() || undefined,
+      }
+      const created = await generateInvite(familyId, payload)
+      setNewCode(created)
+      setInvites(prev => [created, ...prev])
+      setShowAddMemberWizard(false)
+      setAddMemberMode('choose')
+      setWizardInviteNameHint('')
+      setWizardInviteEmail('')
+    } catch (err) {
+      setWizardInviteError(err instanceof SaApiError ? err.message : 'Failed to generate invite.')
+    } finally {
+      setWizardGenerating(false)
+    }
+  }
+
+  async function handleWizardSendWithEmail(e: React.FormEvent) {
+    e.preventDefault()
+    setWizardInviteError(null)
+    setWizardSendingEmail(true)
+    try {
+      const payload: GenerateInvitePayload = {
+        role: wizardInviteRole,
+        displayNameHint: wizardInviteNameHint.trim() || undefined,
+      }
+      const created = await generateInvite(familyId, payload)
+      setNewCode(created)
+      setInvites(prev => [created, ...prev])
+      try {
+        await sendInviteEmail(familyId, created.code, wizardInviteEmail.trim())
+      } catch {
+        // Non-fatal — code was created; show it even if email failed
+        setWizardInviteError('Code generated but the email could not be sent. Share the code manually.')
+        setShowAddMemberWizard(false)
+        setAddMemberMode('choose')
+        setWizardInviteNameHint('')
+        setWizardInviteEmail('')
+        setWizardSendingEmail(false)
+        return
+      }
+      setShowAddMemberWizard(false)
+      setAddMemberMode('choose')
+      setWizardInviteNameHint('')
+      setWizardInviteEmail('')
+    } catch (err) {
+      setWizardInviteError(err instanceof SaApiError ? err.message : 'Failed to generate invite.')
+    } finally {
+      setWizardSendingEmail(false)
+    }
+  }
+
+  // Purge wizard submit
+  async function handlePurgeSubmit() {
+    setPurgeSubmitting(true)
+    setPurgeError(null)
+    setPurgeResult(null)
+    try {
+      const beforeDate = new Date(purgeBeforeDate + 'T00:00:00').toISOString()
+      if (purgeType === 'transactions') {
+        const result = await purgeTransactions(familyId, { kidOid: purgeKidOid, beforeDate })
+        setPurgeResult(result)
+      } else {
+        const result = await purgeAuditLog(familyId, beforeDate)
+        setPurgeResult(result)
+      }
+      // purgeResult is set; wizard shows result panel
+    } catch (err) {
+      setPurgeError(err instanceof SaApiError ? err.message : 'Purge failed. Please try again.')
+    } finally {
+      setPurgeSubmitting(false)
+    }
+  }
+
+  function openPurgeWizard() {
+    setPurgeWizardStep('type')
+    setPurgeType('transactions')
+    setPurgeKidOid(members.find(m => m.role === 'User')?.oid ?? '')
+    setPurgeBeforeDate('')
+    setPurgeError(null)
+    setPurgeResult(null)
+    setShowPurgeWizard(true)
   }
 
   async function handleSaveMember(e: React.FormEvent) {
@@ -494,13 +470,15 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
           <div className="sa-section-header">
             <h3 className="sa-section-title">Members ({members.length} / {family.memberLimit})</h3>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn--secondary btn--sm" onClick={openAddTxn}
-                disabled={!members.some(m => m.role === 'User')}>
-                + Add Transaction
+              <button
+                className="btn btn--secondary btn--sm"
+                onClick={openPurgeWizard}
+              >
+                Purge Data
               </button>
               <button
                 className="btn btn--primary btn--sm"
-                onClick={() => { setShowAddMemberWizard(true); setAddMemberMode('choose'); setLocalMemberName(''); setLocalMemberError(null) }}
+                onClick={() => { setShowAddMemberWizard(true); setAddMemberMode('choose'); setLocalMemberName(''); setLocalMemberError(null); setWizardInviteError(null); setWizardInviteNameHint(''); setWizardInviteEmail('') }}
               >
                 + Add Member
               </button>
@@ -519,27 +497,20 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
                     <th>Display Name</th>
                     <th>Role</th>
                     <th>OID</th>
-                    <th>Allowance</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {members.map(m => {
-                    const ks = m.kidSettings as Record<string, unknown> | undefined
                     return (
                       <tr key={m.oid}>
                         <td className="sa-member-name">{m.displayName}</td>
                         <td>
-                          <span className={`sa-role-badge sa-role-badge--${m.role === 'FamilyAdmin' ? 'admin' : 'user'}`}>
-                            {m.role}
+                          <span className={`sa-role-badge sa-role-badge--${m.role === 'FamilyAdmin' ? 'admin' : m.isLocalAccount ? 'local' : 'user'}`}>
+                            {m.role}{m.isLocalAccount ? ' · Local' : ''}
                           </span>
                         </td>
                         <td><code className="sa-code sa-code--sm">{m.oid}</code></td>
-                        <td className="td-date">
-                          {ks?.allowanceEnabled
-                            ? `$${ks.allowanceAmount} / ${ks.allowanceFrequency}`
-                            : '—'}
-                        </td>
                         <td className="td-actions">
                           <button className="btn-action btn-action--edit" onClick={() => openEditMember(m)}>
                             Edit
@@ -574,11 +545,11 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
                   <div className="add-member-wizard">
                     <button
                       className="add-member-wizard__option"
-                      onClick={() => { setShowAddMemberWizard(false); openAddMember() }}
+                      onClick={() => { setAddMemberMode('invite'); setWizardInviteRole('FamilyAdmin'); setWizardInviteNameHint(''); setWizardInviteEmail(''); setWizardInviteError(null) }}
                     >
                       <span className="add-member-wizard__option-title">Invite account</span>
                       <span className="add-member-wizard__option-desc">
-                        Manually add an Entra account by OID — for users who already have an account.
+                        Generate an invite code. The person can sign in and redeem it to join the family.
                       </span>
                     </button>
                     <button
@@ -596,6 +567,76 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
                   <button className="btn btn--secondary" onClick={() => setShowAddMemberWizard(false)}>Cancel</button>
                 </div>
               </>
+            )}
+
+            {addMemberMode === 'invite' && (
+              <form onSubmit={handleWizardSendWithEmail}>
+                <div className="sa-dialog__body">
+                  <div className="sa-form-group">
+                    <label className="sa-form-label" htmlFor="wiz-inv-email">Email address</label>
+                    <input
+                      id="wiz-inv-email"
+                      className="sa-form-input"
+                      type="email"
+                      placeholder="recipient@example.com"
+                      maxLength={254}
+                      value={wizardInviteEmail}
+                      onChange={e => setWizardInviteEmail(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
+                  <div className="sa-form-group">
+                    <label className="sa-form-label" htmlFor="wiz-inv-hint">Name (optional)</label>
+                    <input
+                      id="wiz-inv-hint"
+                      className="sa-form-input"
+                      type="text"
+                      placeholder="e.g. Jacob"
+                      maxLength={60}
+                      value={wizardInviteNameHint}
+                      onChange={e => setWizardInviteNameHint(e.target.value)}
+                    />
+                  </div>
+                  <div className="sa-form-group">
+                    <label className="sa-form-label" htmlFor="wiz-inv-role">Role</label>
+                    <select
+                      id="wiz-inv-role"
+                      className="sa-form-select"
+                      value={wizardInviteRole}
+                      onChange={e => setWizardInviteRole(e.target.value as 'User' | 'FamilyAdmin')}
+                    >
+                      <option value="FamilyAdmin">FamilyAdmin (parent/manager)</option>
+                      <option value="User">User (kid with allowance)</option>
+                    </select>
+                  </div>
+                  {wizardInviteError && <p className="sa-form-error" role="alert">{wizardInviteError}</p>}
+                </div>
+                <div className="sa-dialog__actions">
+                  <button
+                    type="button"
+                    className="btn btn--secondary"
+                    onClick={() => setAddMemberMode('choose')}
+                    disabled={wizardGenerating || wizardSendingEmail}
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--secondary"
+                    onClick={handleWizardGenerateCodeOnly}
+                    disabled={wizardGenerating || wizardSendingEmail}
+                  >
+                    {wizardGenerating ? 'Generating…' : 'Generate code only'}
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn--primary"
+                    disabled={wizardGenerating || wizardSendingEmail || !wizardInviteEmail.trim()}
+                  >
+                    {wizardSendingEmail ? 'Sending…' : 'Send invite'}
+                  </button>
+                </div>
+              </form>
             )}
 
             {addMemberMode === 'local' && (
@@ -646,7 +687,6 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
                     value={form.oid}
                     onChange={e => setField('oid', e.target.value)}
                     placeholder="Entra object ID (GUID)"
-                    disabled={!!editingMember}
                     required
                   />
                 </div>
@@ -677,87 +717,6 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
                 </select>
               </div>
 
-              {form.role === 'User' && (
-                <div className="sa-allowance-section">
-                  <div className="form-toggle-row">
-                    <span className="sa-form-label">Allowance Schedule</span>
-                    <label className="toggle-switch" aria-label="Enable allowance schedule">
-                      <input
-                        type="checkbox"
-                        checked={form.allowanceEnabled}
-                        onChange={e => setField('allowanceEnabled', e.target.checked)}
-                      />
-                      <span className="toggle-switch__track" />
-                    </label>
-                  </div>
-
-                  {form.allowanceEnabled && (
-                    <div className="sa-allowance-fields">
-                      <div className="sa-form-row">
-                        <div className="sa-form-group">
-                          <label className="sa-form-label" htmlFor="m-amt">Amount ($)</label>
-                          <input
-                            id="m-amt"
-                            className="sa-form-input"
-                            type="number"
-                            min="0" step="0.50"
-                            value={form.allowanceAmount}
-                            onChange={e => setField('allowanceAmount', e.target.value)}
-                          />
-                        </div>
-                        <div className="sa-form-group">
-                          <label className="sa-form-label" htmlFor="m-freq">Frequency</label>
-                          <select
-                            id="m-freq"
-                            className="sa-form-select"
-                            value={form.allowanceFrequency}
-                            onChange={e => setField('allowanceFrequency', e.target.value)}
-                          >
-                            {FREQUENCIES.map(f => <option key={f} value={f}>{f}</option>)}
-                          </select>
-                        </div>
-                        {form.allowanceFrequency !== 'Monthly' && (
-                          <div className="sa-form-group">
-                            <label className="sa-form-label" htmlFor="m-day">Day</label>
-                            <select
-                              id="m-day"
-                              className="sa-form-select"
-                              value={form.dayOfWeek}
-                              onChange={e => setField('dayOfWeek', e.target.value)}
-                            >
-                              {DAYS_OF_WEEK.map((d, i) => <option key={d} value={i}>{d}</option>)}
-                            </select>
-                          </div>
-                        )}
-                      </div>
-                      <div className="sa-form-row">
-                        <div className="sa-form-group">
-                          <label className="sa-form-label" htmlFor="m-time">Time</label>
-                          <input
-                            id="m-time"
-                            className="sa-form-input"
-                            type="time"
-                            value={form.timeOfDay}
-                            onChange={e => setField('timeOfDay', e.target.value)}
-                          />
-                        </div>
-                        <div className="sa-form-group sa-form-group--grow">
-                          <label className="sa-form-label" htmlFor="m-tz">Timezone</label>
-                          <select
-                            id="m-tz"
-                            className="sa-form-select"
-                            value={form.timezone}
-                            onChange={e => setField('timezone', e.target.value)}
-                          >
-                            {TIMEZONES.map(tz => <option key={tz.value} value={tz.value}>{tz.label}</option>)}
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
               {formError && <p className="sa-form-error" role="alert">{formError}</p>}
 
               <div className="sa-dialog__actions">
@@ -780,48 +739,11 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
             <h3 className="sa-section-title">Invite Codes</h3>
             <button
               className="btn btn--primary btn--sm"
-              onClick={() => { setShowInviteForm(s => !s); setInviteError(null) }}
+              onClick={() => { setShowAddMemberWizard(true); setAddMemberMode('invite'); setWizardInviteRole('FamilyAdmin'); setWizardInviteNameHint(''); setWizardInviteEmail(''); setWizardInviteError(null) }}
             >
-              {showInviteForm ? 'Cancel' : '+ Generate Invite'}
+              + Generate Invite
             </button>
           </div>
-
-          {showInviteForm && (
-            <form className="sa-inline-form" onSubmit={handleGenerateInvite}>
-              <h3 className="sa-inline-form__title">Generate Invite Code</h3>
-              <div className="sa-form-row">
-                <div className="sa-form-group">
-                  <label className="sa-form-label" htmlFor="inv-role">Role</label>
-                  <select
-                    id="inv-role"
-                    className="sa-form-select"
-                    value={inviteRole}
-                    onChange={e => setInviteRole(e.target.value as 'User' | 'FamilyAdmin')}
-                  >
-                    <option value="FamilyAdmin">FamilyAdmin (parent)</option>
-                    <option value="User">User (kid)</option>
-                  </select>
-                </div>
-                <div className="sa-form-group sa-form-group--grow">
-                  <label className="sa-form-label" htmlFor="inv-hint">Name Hint (optional)</label>
-                  <input
-                    id="inv-hint"
-                    className="sa-form-input"
-                    type="text"
-                    placeholder="e.g. Jacob"
-                    value={inviteNameHint}
-                    onChange={e => setInviteNameHint(e.target.value)}
-                  />
-                </div>
-              </div>
-              {inviteError && <p className="sa-form-error" role="alert">{inviteError}</p>}
-              <div className="sa-form-actions">
-                <button className="btn btn--primary" type="submit" disabled={generatingInvite}>
-                  {generatingInvite ? 'Generating…' : 'Generate Code'}
-                </button>
-              </div>
-            </form>
-          )}
 
           {/* Newly generated code — prominent display for copying */}
           {newCode && (
@@ -935,117 +857,6 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
         </>
       )}
 
-      {/* Add Transaction dialog */}
-      {showAddTxn && (
-        <div className="sa-dialog-overlay" role="dialog" aria-modal="true" aria-labelledby="sa-add-txn-title">
-          <div className="sa-dialog">
-            <p className="sa-dialog__title" id="sa-add-txn-title">Add Transaction</p>
-            <form onSubmit={handleAddTxn}>
-              <div className="sa-dialog__body">
-                <div className="sa-form-row">
-                  <div className="sa-form-group sa-form-group--grow">
-                    <label className="sa-form-label" htmlFor="sa-txn-kid">Child</label>
-                    <select
-                      id="sa-txn-kid"
-                      className="sa-form-select"
-                      value={addTxnKidOid}
-                      onChange={e => setAddTxnKidOid(e.target.value)}
-                      required
-                    >
-                      {members.filter(m => m.role === 'User').map(m => (
-                        <option key={m.oid} value={m.oid}>{m.displayName}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="sa-form-group">
-                    <label className="sa-form-label" htmlFor="sa-txn-cat">Category</label>
-                    <select
-                      id="sa-txn-cat"
-                      className="sa-form-select"
-                      value={addTxnCategory}
-                      onChange={e => { setAddTxnCategory(e.target.value as AddTransactionPayload['category']); setAddTxnTithable(true) }}
-                    >
-                      <option value="Income">Income</option>
-                      <option value="Purchase">Purchase</option>
-                      <option value="Tithing">Tithing</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="sa-form-row">
-                  <div className="sa-form-group">
-                    <label className="sa-form-label" htmlFor="sa-txn-date">Date</label>
-                    <input
-                      id="sa-txn-date"
-                      className="sa-form-input"
-                      type="date"
-                      value={addTxnDate}
-                      onChange={e => setAddTxnDate(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="sa-form-group">
-                    <label className="sa-form-label" htmlFor="sa-txn-amount">Amount ($)</label>
-                    <input
-                      id="sa-txn-amount"
-                      className="sa-form-input"
-                      type="number"
-                      min="0.01"
-                      step="any"
-                      placeholder="0.00"
-                      value={addTxnAmount}
-                      onChange={e => setAddTxnAmount(e.target.value)}
-                      required
-                    />
-                  </div>
-                </div>
-                <div className="sa-form-group">
-                  <label className="sa-form-label" htmlFor="sa-txn-notes">Notes (optional)</label>
-                  <input
-                    id="sa-txn-notes"
-                    className="sa-form-input"
-                    type="text"
-                    maxLength={500}
-                    placeholder="e.g., Chore payment"
-                    value={addTxnNotes}
-                    onChange={e => setAddTxnNotes(e.target.value)}
-                  />
-                </div>
-                {addTxnCategory === 'Income' && (
-                  <div className="sa-form-group">
-                    <label className="sa-form-label sa-form-label--checkbox">
-                      <input
-                        type="checkbox"
-                        checked={addTxnTithable}
-                        onChange={e => setAddTxnTithable(e.target.checked)}
-                      />
-                      {' '}Tithable income (adds 10% to Tithing Owed)
-                    </label>
-                  </div>
-                )}
-                {addTxnError && <p className="sa-form-error" role="alert">{addTxnError}</p>}
-              </div>
-              <div className="sa-dialog__actions">
-                <button
-                  type="button"
-                  className="btn btn--secondary"
-                  onClick={() => setShowAddTxn(false)}
-                  disabled={addTxnSubmitting}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="btn btn--primary"
-                  disabled={addTxnSubmitting}
-                >
-                  {addTxnSubmitting ? 'Adding…' : 'Add Transaction'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* Send invite email */}
       {emailInvite && (
         <div className="sa-dialog-overlay" role="dialog" aria-modal="true" aria-labelledby="sa-email-inv-title">
@@ -1141,124 +952,173 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
         </div>
       )}
 
-      {/* ── Transaction Maintenance ── */}
-      {family && !loading && members.some(m => m.role === 'User') && (
-        <>
-          <div className="sa-section-header" style={{ marginTop: 8 }}>
-            <h3 className="sa-section-title">Transaction Maintenance</h3>
-          </div>
-          <div className="sa-inline-form">
-            <p className="sa-form-hint" style={{ marginBottom: 12 }}>
-              Purge old transactions for a kid. Their financial contributions are accumulated
-              into a running base so balances remain accurate after records are deleted.
-            </p>
-            <div className="sa-form-row">
-              <div className="sa-form-group">
-                <label className="sa-form-label" htmlFor="purge-kid">Child</label>
-                <select
-                  id="purge-kid"
-                  className="sa-form-select"
-                  value={purgeKidOid}
-                  onChange={e => { setPurgeKidOid(e.target.value); setPurgeResult(null); setPurgeError(null) }}
-                >
-                  <option value="">— select a child —</option>
-                  {members.filter(m => m.role === 'User').map(m => (
-                    <option key={m.oid} value={m.oid}>{m.displayName}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="sa-form-group">
-                <label className="sa-form-label" htmlFor="purge-before">Purge transactions before</label>
-                <input
-                  id="purge-before"
-                  className="sa-form-input"
-                  type="date"
-                  value={purgeBeforeDate}
-                  onChange={e => { setPurgeBeforeDate(e.target.value); setPurgeResult(null); setPurgeError(null) }}
-                />
-              </div>
-            </div>
-            {purgeError && <p className="sa-form-error" role="alert">{purgeError}</p>}
-            {purgeResult && (
-              <div className="sa-purge-result">
-                {purgeResult.purgedCount === 0
-                  ? <p>No transactions found before that date for this child.</p>
-                  : <p>
-                      Purged <strong>{purgeResult.purgedCount}</strong> transaction(s).
-                      {purgeResult.skippedCount > 0 && ` (${purgeResult.skippedCount} could not be deleted.)`}
-                      {' '}Balance delta: <strong>${purgeResult.purgedBalanceDelta.toFixed(2)}</strong>,
-                      tithing delta: <strong>${purgeResult.purgedTithingOwedDelta.toFixed(2)}</strong>.
-                    </p>
-                }
-              </div>
-            )}
-            <div className="sa-form-actions">
-              <button
-                className="btn btn--danger btn--sm"
-                disabled={!purgeKidOid || !purgeBeforeDate || purgeSubmitting}
-                onClick={() => { setPurgeError(null); setPurgeResult(null); setShowPurgeConfirm(true) }}
-              >
-                Purge Transactions
-              </button>
-            </div>
-          </div>
-        </>
-      )}
+      {/* Purge Data wizard */}
+      {showPurgeWizard && (
+        <div className="sa-dialog-overlay" role="dialog" aria-modal="true" aria-labelledby="sa-purge-wizard-title">
+          <div className="sa-dialog sa-dialog--wide">
+            <p className="sa-dialog__title" id="sa-purge-wizard-title">Purge Data</p>
 
-      {/* Confirm purge */}
-      {showPurgeConfirm && (() => {
-        const kidName = members.find(m => m.oid === purgeKidOid)?.displayName ?? purgeKidOid
-        const cutoff  = new Date(purgeBeforeDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-        return (
-          <div className="sa-dialog-overlay" role="alertdialog" aria-modal="true">
-            <div className="sa-dialog">
-              <p className="sa-dialog__title">Purge Transactions?</p>
-              <div className="sa-dialog__body">
-                <p>
-                  This will permanently delete all transactions for <strong>{kidName}</strong>{' '}
-                  dated before <strong>{cutoff}</strong>.
-                </p>
-                <p>
-                  Their contributions will be accumulated into a running base so the balance
-                  and tithing owed remain correct. This cannot be undone.
-                </p>
-              </div>
-              <div className="sa-dialog__actions">
-                <button
-                  className="btn btn--secondary"
-                  onClick={() => setShowPurgeConfirm(false)}
-                  disabled={purgeSubmitting}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="btn btn--danger"
-                  disabled={purgeSubmitting}
-                  onClick={async () => {
-                    setShowPurgeConfirm(false)
-                    setPurgeSubmitting(true)
-                    setPurgeError(null)
-                    setPurgeResult(null)
-                    try {
-                      const result = await purgeTransactions(familyId, {
-                        kidOid: purgeKidOid,
-                        beforeDate: new Date(purgeBeforeDate).toISOString(),
-                      })
-                      setPurgeResult(result)
-                    } catch (err) {
-                      setPurgeError(err instanceof SaApiError ? err.message : 'Purge failed. Please try again.')
-                    } finally {
-                      setPurgeSubmitting(false)
+            {/* Step 1 — choose type */}
+            {purgeWizardStep === 'type' && (
+              <>
+                <div className="sa-dialog__body">
+                  <p style={{ marginBottom: 12, color: 'var(--color-text-muted, #666)' }}>
+                    What would you like to purge?
+                  </p>
+                  <div className="add-member-wizard">
+                    <button
+                      className={`add-member-wizard__option${purgeType === 'transactions' ? ' add-member-wizard__option--selected' : ''}`}
+                      onClick={() => setPurgeType('transactions')}
+                    >
+                      <span className="add-member-wizard__option-title">Transactions</span>
+                      <span className="add-member-wizard__option-desc">
+                        Permanently remove old transaction records for a child. Running balances
+                        are preserved via accumulated base values.
+                      </span>
+                    </button>
+                    <button
+                      className={`add-member-wizard__option${purgeType === 'audit-log' ? ' add-member-wizard__option--selected' : ''}`}
+                      onClick={() => setPurgeType('audit-log')}
+                    >
+                      <span className="add-member-wizard__option-title">Audit Log</span>
+                      <span className="add-member-wizard__option-desc">
+                        Permanently remove admin action log entries for this family older than
+                        a chosen date.
+                      </span>
+                    </button>
+                  </div>
+                </div>
+                <div className="sa-dialog__actions">
+                  <button className="btn btn--secondary" onClick={() => setShowPurgeWizard(false)}>Cancel</button>
+                  <button
+                    className="btn btn--primary"
+                    onClick={() => { setPurgeBeforeDate(''); setPurgeKidOid(members.find(m => m.role === 'User')?.oid ?? ''); setPurgeWizardStep('date') }}
+                  >
+                    Next
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* Step 2 — date (and optional kid for transactions) */}
+            {purgeWizardStep === 'date' && !purgeResult && (
+              <>
+                <div className="sa-dialog__body">
+                  {purgeType === 'transactions' && members.some(m => m.role === 'User') && (
+                    <div className="sa-form-group">
+                      <label className="sa-form-label" htmlFor="pw-kid">Child</label>
+                      <select
+                        id="pw-kid"
+                        className="sa-form-select"
+                        value={purgeKidOid}
+                        onChange={e => setPurgeKidOid(e.target.value)}
+                      >
+                        <option value="">— All children —</option>
+                        {members.filter(m => m.role === 'User').map(m => (
+                          <option key={m.oid} value={m.oid}>{m.displayName}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  <div className="sa-form-group">
+                    <label className="sa-form-label" htmlFor="pw-date">
+                      Purge {purgeType === 'transactions' ? 'transactions' : 'log entries'} older than
+                    </label>
+                    <input
+                      id="pw-date"
+                      className="sa-form-input"
+                      type="date"
+                      value={purgeBeforeDate}
+                      onChange={e => setPurgeBeforeDate(e.target.value)}
+                      autoFocus
+                    />
+                    <p className="sa-form-hint" style={{ marginTop: 6 }}>
+                      {purgeType === 'transactions'
+                        ? 'Transactions dated before this date will be permanently deleted. Running balances are unaffected.'
+                        : 'Audit log entries with a timestamp before this date will be permanently deleted.'
+                      }
+                    </p>
+                  </div>
+                  {purgeError && <p className="sa-form-error" role="alert">{purgeError}</p>}
+                </div>
+                <div className="sa-dialog__actions">
+                  <button className="btn btn--secondary" onClick={() => { setPurgeWizardStep('type'); setPurgeError(null) }}>Back</button>
+                  <button
+                    className="btn btn--danger"
+                    disabled={!purgeBeforeDate}
+                    onClick={() => setPurgeWizardStep('confirm')}
+                  >
+                    Review
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* Step 3 — confirm */}
+            {purgeWizardStep === 'confirm' && !purgeResult && (() => {
+              const kidName = purgeKidOid ? members.find(m => m.oid === purgeKidOid)?.displayName ?? purgeKidOid : 'all children'
+              const cutoff  = new Date(purgeBeforeDate + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+              return (
+                <>
+                  <div className="sa-dialog__body">
+                    <div className="sa-purge-confirm-warning">
+                      <p><strong>⚠️ Are you sure? This action cannot be undone.</strong></p>
+                    </div>
+                    <p style={{ marginTop: 12 }}>
+                      {purgeType === 'transactions'
+                        ? <>All transactions for <strong>{kidName}</strong> dated before <strong>{cutoff}</strong> will be <strong>permanently deleted</strong>.</>
+                        : <>All audit log entries before <strong>{cutoff}</strong> will be <strong>permanently deleted</strong>.</>
+                      }
+                    </p>
+                    {purgeError && <p className="sa-form-error" role="alert" style={{ marginTop: 12 }}>{purgeError}</p>}
+                  </div>
+                  <div className="sa-dialog__actions">
+                    <button
+                      className="btn btn--secondary"
+                      onClick={() => { setPurgeWizardStep('date'); setPurgeError(null) }}
+                      disabled={purgeSubmitting}
+                    >
+                      Back
+                    </button>
+                    <button
+                      className="btn btn--danger"
+                      disabled={purgeSubmitting}
+                      onClick={handlePurgeSubmit}
+                    >
+                      {purgeSubmitting ? 'Purging…' : 'Purge'}
+                    </button>
+                  </div>
+                </>
+              )
+            })()}
+
+            {/* Result */}
+            {purgeResult && (
+              <>
+                <div className="sa-dialog__body">
+                  <div className="sa-purge-result">
+                    {purgeResult.purgedCount === 0
+                      ? <p>✅ No records found older than that date — nothing was deleted.</p>
+                      : <p>
+                          ✅ Purged <strong>{purgeResult.purgedCount}</strong> record(s).
+                          {purgeResult.skippedCount > 0 && ` (${purgeResult.skippedCount} could not be deleted.)`}
+                        </p>
                     }
-                  }}
-                >
-                  {purgeSubmitting ? 'Purging…' : 'Purge'}
-                </button>
-              </div>
-            </div>
+                  </div>
+                </div>
+                <div className="sa-dialog__actions">
+                  <button
+                    className="btn btn--primary"
+                    onClick={() => { setShowPurgeWizard(false); setPurgeResult(null) }}
+                  >
+                    Done
+                  </button>
+                </div>
+              </>
+            )}
           </div>
-        )
-      })()}
+        </div>
+      )}
     </div>
   )
 }
