@@ -2821,6 +2821,12 @@ body {
 }
 .add-member-wizard__option:hover,
 .add-member-wizard__option:focus-visible { border-color: var(--primary); background: var(--primary-light, #eff6ff); }
+.add-member-wizard__option--selected {
+  border-color: var(--primary);
+  background: var(--primary-light, #eff6ff);
+  box-shadow: 0 0 0 2px var(--primary);
+  outline: none;
+}
 .add-member-wizard__option-title { font-weight: 600; font-size: 0.95rem; color: var(--text); }
 .add-member-wizard__option-desc  { font-size: 0.8rem; color: var(--text-muted); line-height: 1.4; }
 .sa-dialog__body   { font-size: 0.9rem; color: #475569; display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }

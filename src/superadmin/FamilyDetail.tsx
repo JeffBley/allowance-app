@@ -96,7 +96,7 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
   type PurgeWizardStep = 'type' | 'date' | 'confirm'
   const [showPurgeWizard, setShowPurgeWizard]     = useState(false)
   const [purgeWizardStep, setPurgeWizardStep]     = useState<PurgeWizardStep>('type')
-  const [purgeType, setPurgeType]                 = useState<PurgeType>('transactions')
+  const [purgeType, setPurgeType]                 = useState<PurgeType | null>(null)
   const [purgeKidOid, setPurgeKidOid]             = useState('')
   const [purgeBeforeDate, setPurgeBeforeDate]     = useState('')
   const [purgeSubmitting, setPurgeSubmitting]     = useState(false)
@@ -298,6 +298,7 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
 
   // Purge wizard submit
   async function handlePurgeSubmit() {
+    if (!purgeType) return
     setPurgeSubmitting(true)
     setPurgeError(null)
     setPurgeResult(null)
@@ -320,7 +321,7 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
 
   function openPurgeWizard() {
     setPurgeWizardStep('type')
-    setPurgeType('transactions')
+    setPurgeType(null)
     setPurgeKidOid(members.find(m => m.role === 'User')?.oid ?? '')
     setPurgeBeforeDate('')
     setPurgeError(null)
@@ -992,6 +993,7 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
                   <button className="btn btn--secondary" onClick={() => setShowPurgeWizard(false)}>Cancel</button>
                   <button
                     className="btn btn--primary"
+                    disabled={purgeType === null}
                     onClick={() => { setPurgeBeforeDate(''); setPurgeKidOid(members.find(m => m.role === 'User')?.oid ?? ''); setPurgeWizardStep('date') }}
                   >
                     Next
