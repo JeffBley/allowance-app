@@ -12,17 +12,16 @@ interface Props {
 }
 
 function formatDate(iso: string): string {
-  const [year, month, day] = iso.split('-').map(Number)
-  return new Date(year, month - 1, day).toLocaleDateString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric',
-  })
+  const date = new Date(iso)
+  if (isNaN(date.getTime())) return '—'
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
 }
 
 function formatNextAllowance(iso: string): string {
-  const [year, month, day] = iso.split('T')[0].split('-').map(Number)
-  const d = new Date(year, month - 1, day)
-  const monthName = d.toLocaleDateString('en-US', { month: 'long' })
-  const dayNum = d.getDate()
+  const date = new Date(iso)
+  if (isNaN(date.getTime())) return '—'
+  const monthName = date.toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' })
+  const dayNum = date.getUTCDate()
   const suffix = dayNum === 1 || dayNum === 21 || dayNum === 31 ? 'st'
                : dayNum === 2 || dayNum === 22 ? 'nd'
                : dayNum === 3 || dayNum === 23 ? 'rd' : 'th'

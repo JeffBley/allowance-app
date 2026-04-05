@@ -210,29 +210,46 @@ interface ChoreRowProps {
   onDelete: () => void
 }
 
+// Approximate height of the 3-item chore menu (3 × ~40 px + border/padding).
+const CHORE_MENU_HEIGHT = 136
+
 function ChoreRow({ chore, onComplete, onEdit, onDelete }: ChoreRowProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
 
-  // Close menu on outside click
+  // Close menu on outside click or any scroll (prevents the menu from being
+  // stranded at the wrong viewport position after the user scrolls).
   useEffect(() => {
     if (!menuOpen) return
-    function handler(e: MouseEvent) {
+    function handleClick(e: MouseEvent) {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpen(false)
       }
     }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
+    function handleScroll() {
+      setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    window.addEventListener('scroll', handleScroll, { capture: true, passive: true })
+    return () => {
+      document.removeEventListener('mousedown', handleClick)
+      window.removeEventListener('scroll', handleScroll, { capture: true })
+    }
   }, [menuOpen])
 
   function handleOpenMenu() {
     if (menuOpen) { setMenuOpen(false); return }
     if (btnRef.current) {
       const r = btnRef.current.getBoundingClientRect()
-      setMenuPos({ top: r.bottom + 4, right: window.innerWidth - r.right })
+      // Flip the menu above the button when there isn't enough space below,
+      // so it never overflows off the bottom of the viewport on mobile.
+      const spaceBelow = window.innerHeight - r.bottom - 4
+      const top = spaceBelow >= CHORE_MENU_HEIGHT
+        ? r.bottom + 4
+        : r.top - CHORE_MENU_HEIGHT - 4
+      setMenuPos({ top, right: window.innerWidth - r.right })
     }
     setMenuOpen(true)
   }

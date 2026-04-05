@@ -572,7 +572,7 @@ export function InviteSection({ memberCount, memberLimit, members = [], onMember
                   <tr key={m.oid}>
                     <td>
                       <span className={`sa-role-badge sa-role-badge--${m.role === 'FamilyAdmin' ? 'admin' : 'user'}`}>
-                        {m.role === 'FamilyAdmin' ? 'Admin' : 'User'}
+                        {m.role === 'FamilyAdmin' ? 'Family Admin' : 'User'}
                       </span>
                     </td>
                     <td>{m.displayName}</td>
@@ -677,7 +677,7 @@ export function InviteSection({ memberCount, memberLimit, members = [], onMember
                     <tr key={inv.code}>
                       <td>
                         <span className={`sa-role-badge sa-role-badge--${inv.role === 'FamilyAdmin' ? 'admin' : inv.localMemberOid ? 'link' : 'user'}`}>
-                          {inv.role === 'FamilyAdmin' ? 'Admin' : 'User'}{inv.localMemberOid ? ' · Link' : ''}
+                          {inv.role === 'FamilyAdmin' ? 'Family Admin' : 'User'}{inv.localMemberOid ? ' · Link' : ''}
                         </span>
                       </td>
                       <td>{inv.displayNameHint ?? '—'}</td>
@@ -1079,7 +1079,7 @@ export function InviteSection({ memberCount, memberLimit, members = [], onMember
                     onChange={e => setLinkRole(e.target.value as 'User' | 'FamilyAdmin')}
                   >
                     <option value="User">User (kid with allowance)</option>
-                    <option value="FamilyAdmin">FamilyAdmin (parent/manager)</option>
+                    <option value="FamilyAdmin">Family Admin (parent/manager)</option>
                   </select>
                 </div>
                 {linkGenError && <p className="sa-form-error" role="alert">{linkGenError}</p>}
@@ -1184,7 +1184,7 @@ export function InviteSection({ memberCount, memberLimit, members = [], onMember
                       onChange={e => setInviteRole(e.target.value as 'User' | 'FamilyAdmin')}
                     >
                       <option value="User">User (kid with allowance)</option>
-                      <option value="FamilyAdmin">FamilyAdmin (parent/manager)</option>
+                      <option value="FamilyAdmin">Family Admin (parent/manager)</option>
                     </select>
                   </div>
                   {genError && <p className="sa-form-error" role="alert">{genError}</p>}
@@ -1401,11 +1401,15 @@ export default function AdminFamilyMembersTab({ kids, tithingEnabled, onUnsavedS
     setIsSaving(true)
     setSaveError(null)
     try {
-      await apiFetch('settings', {
+      const result = await apiFetch<{ user: { oid: string; displayName: string; role: string; kidSettings: KidSettings } }>('settings', {
         method: 'PATCH',
         body: JSON.stringify({ kidOid: selectedId, kidSettings: settingsToSave }),
       })
-      setSavedPerKid(prev => ({ ...prev, [selectedId]: settingsToSave }))
+      // Use the server's response to sync local state — the server may have computed
+      // nextAllowanceDate (or preserved the scheduler's date) which the client doesn't know.
+      const savedSettings = result.user.kidSettings
+      setSavedPerKid(prev => ({ ...prev, [selectedId]: savedSettings }))
+      setEdited({ ...savedSettings })
       setShowBiweeklyDialog(false)
       onSettingsSaved()
     } catch {
