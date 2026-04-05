@@ -3,6 +3,7 @@ import { validateBearerToken, UNAUTHORIZED, FORBIDDEN } from '../middleware/auth
 import { resolveFamilyScope, NOT_ENROLLED } from '../middleware/familyScope.js';
 import { getContainer } from '../data/cosmosClient.js';
 import type { UpdateSettingsRequest, KidSettings } from '../data/models.js';
+import { makeZonedDate, getLocalDateComponents } from '../dateUtils.js';
 
 // ---------------------------------------------------------------------------
 // PATCH /api/settings — update a kid's allowance settings (FamilyAdmin only)
@@ -113,14 +114,20 @@ async function updateSettings(request: HttpRequest, context: InvocationContext):
       const existing = kidUser.kidSettings as KidSettings | undefined;
       const scheduleChanged =
         !existing?.allowanceEnabled ||
-        !ks.nextAllowanceDate ||
+        !existing?.nextAllowanceDate ||
         existing?.allowanceFrequency !== ks.allowanceFrequency ||
         existing?.dayOfWeek !== ks.dayOfWeek ||
-        existing?.biweeklyStartDate !== ks.biweeklyStartDate;
+        existing?.biweeklyStartDate !== ks.biweeklyStartDate ||
+        existing?.timeOfDay !== ks.timeOfDay ||
+        existing?.timezone !== ks.timezone;
 
       if (scheduleChanged) {
         ks.nextAllowanceDate = computeInitialNextDate(ks).toISOString();
         context.log(`[updateSettings] Computed initial nextAllowanceDate: ${ks.nextAllowanceDate}`);
+      } else {
+        // Always restore the scheduler's next-date from the DB — never let stale client
+        // state (which may omit nextAllowanceDate) overwrite it and cause a missed payment.
+        ks.nextAllowanceDate = existing!.nextAllowanceDate;
       }
     }
 
@@ -185,39 +192,73 @@ app.http('updateSettings', {
 // ---------------------------------------------------------------------------
 // Computes the first (initial) allowance date from "now" based on the
 // schedule settings.  Used when allowance is enabled for the first time or
-// when the schedule configuration changes.  All dates are stored as UTC ISO
-// strings; times are fixed at 12:00 UTC as a neutral midday reference.
+// when the schedule configuration changes.
+//
+// Dates are computed as calendar-day-based local times in the user's
+// configured timezone, then stored as UTC ISO strings.  This ensures that
+// DST transitions don't silently shift the fire time by an hour, and that
+// the deposit actually fires at the time the user configured (e.g. 5:30 AM
+// Eastern) rather than at a fixed UTC hour.
+//
+// Fallback: if timeOfDay or timezone are absent, noon UTC is used.
 // ---------------------------------------------------------------------------
 function computeInitialNextDate(ks: KidSettings): Date {
   const now = new Date();
 
+  // Parse configured fire time in the user's local timezone.
+  // Fall back to noon UTC if either field is absent (legacy/default).
+  const [fireHour, fireMinute] = ks.timeOfDay
+    ? ks.timeOfDay.split(':').map(Number)
+    : [12, 0];
+  const timezone = ks.timezone ?? 'UTC';
+
   if (ks.allowanceFrequency === 'Monthly') {
-    // 1st of next month at noon UTC
-    const d = new Date(now);
-    d.setUTCMonth(d.getUTCMonth() + 1);
-    d.setUTCDate(1);
-    d.setUTCHours(12, 0, 0, 0);
-    return d;
+    // Try 1st of this month at the configured local fire time.
+    // If that moment has already passed, advance to 1st of next month.
+    const nowLocal = getLocalDateComponents(now, timezone);
+    const thisMonthFirst = makeZonedDate(nowLocal.year, nowLocal.month, 1, fireHour, fireMinute, timezone);
+    if (thisMonthFirst > now) return thisMonthFirst;
+    let nextMonth = nowLocal.month + 1;
+    let nextYear = nowLocal.year;
+    if (nextMonth > 12) { nextMonth = 1; nextYear++; }
+    return makeZonedDate(nextYear, nextMonth, 1, fireHour, fireMinute, timezone);
   }
 
   if (ks.allowanceFrequency === 'Bi-weekly' && ks.biweeklyStartDate) {
-    // Advance from the chosen anchor by 14-day increments until the result
-    // is strictly in the future.
-    const start = new Date(ks.biweeklyStartDate);
-    start.setUTCHours(12, 0, 0, 0);
-    while (start <= now) {
-      start.setUTCDate(start.getUTCDate() + 14);
+    // Advance from the chosen anchor by 14-day increments (calendar days, DST-safe)
+    // until the result is strictly in the future at the configured local fire time.
+    let { year, month, day } = getLocalDateComponents(new Date(ks.biweeklyStartDate), timezone);
+    let candidate = makeZonedDate(year, month, day, fireHour, fireMinute, timezone);
+    while (candidate <= now) {
+      // Advance by 14 calendar days; JS Date normalises month/day overflow.
+      const next = new Date(Date.UTC(year, month - 1, day + 14));
+      year = next.getUTCFullYear();
+      month = next.getUTCMonth() + 1;
+      day = next.getUTCDate();
+      candidate = makeZonedDate(year, month, day, fireHour, fireMinute, timezone);
     }
-    return start;
+    return candidate;
   }
 
-  // Weekly (and Bi-weekly fallback without an anchor): find the next
-  // occurrence of dayOfWeek (UTC), starting from tomorrow.
+  // Weekly (and Bi-weekly fallback without an anchor):
+  // Step through calendar days starting from TODAY in the user's local timezone.
+  // Use the first day that (a) matches the target dayOfWeek AND (b) whose
+  // configured local fire time is still in the future.
+  // This means: if today is Sunday and 5:30 AM ET hasn't passed yet, use today;
+  // otherwise advance to find the next Sunday.
   const target = ks.dayOfWeek ?? 0;
-  const d = new Date(now);
-  d.setUTCHours(12, 0, 0, 0);
-  do {
-    d.setUTCDate(d.getUTCDate() + 1);
-  } while (d.getUTCDay() !== target);
-  return d;
+  let { year, month, day } = getLocalDateComponents(now, timezone);
+  while (true) {
+    // Day-of-week for a calendar date is timezone-independent (same date = same weekday).
+    const calDayOfWeek = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+    if (calDayOfWeek === target) {
+      const candidate = makeZonedDate(year, month, day, fireHour, fireMinute, timezone);
+      if (candidate > now) return candidate;
+    }
+    // Advance by 1 calendar day.
+    const next = new Date(Date.UTC(year, month - 1, day + 1));
+    year = next.getUTCFullYear();
+    month = next.getUTCMonth() + 1;
+    day = next.getUTCDate();
+  }
 }

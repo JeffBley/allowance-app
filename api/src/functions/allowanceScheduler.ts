@@ -65,7 +65,16 @@ async function allowanceScheduler(_timer: Timer, context: InvocationContext): Pr
       }
 
       const nextDate = new Date(ks.nextAllowanceDate!);
-      const nextAllowanceDate = computeNextDate(ks.nextAllowanceDate!, ks);
+
+      // Compute the next allowance date.  Wrapped in try/catch so a bad record
+      // for one user doesn't crash the entire scheduler run.
+      let nextAllowanceDate: Date;
+      try {
+        nextAllowanceDate = computeNextDate(ks.nextAllowanceDate!, ks);
+      } catch (computeErr) {
+        context.error(`[allowanceScheduler] Failed to compute next date for ${user.displayName}:`, computeErr);
+        continue;
+      }
 
       // ── Step 1: Claim this cycle atomically via ETag-conditioned replace ──────
       // Advance nextAllowanceDate BEFORE creating the transaction. If two instances
@@ -151,8 +160,14 @@ async function allowanceScheduler(_timer: Timer, context: InvocationContext): Pr
 }
 
 /**
- * Computes the next allowance date from the current one, respecting
- * the frequency and day-of-week settings.
+ * Computes the next allowance date from the current one.
+ *
+ * Advances by a fixed number of UTC days from the current fire timestamp.
+ * This preserves the exact UTC fire time (e.g. "12:30 UTC = 8:30 AM ET").
+ * Note: if DST transitions occur between cycles, the local-clock display of
+ * the fire time may shift by one hour, but the UTC basis remains consistent.
+ * Timezone-aware re-computation only happens in computeInitialNextDate
+ * (updateSettings.ts) when the schedule is explicitly reconfigured.
  */
 function computeNextDate(
   currentDateIso: string,
@@ -168,7 +183,7 @@ function computeNextDate(
       return addDays(current, 14);
 
     case 'Monthly': {
-      // Always the 1st of the next month at the same time
+      // 1st of next month, same UTC time of day.
       const next = new Date(current);
       next.setUTCMonth(next.getUTCMonth() + 1);
       next.setUTCDate(1);
@@ -176,7 +191,6 @@ function computeNextDate(
     }
 
     default:
-      // Fallback — add 7 days
       return addDays(current, 7);
   }
 }

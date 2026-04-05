@@ -123,6 +123,15 @@ resource funcApp 'Microsoft.Web/sites@2023-12-01' = {
         }
       }
       scaleAndConcurrency: {
+        // Keep one warm instance for the allowanceScheduler timer trigger.
+        // Without this, Flex Consumption scales to zero and timer triggers
+        // never fire — the function host only wakes on HTTP demand.
+        alwaysReady: [
+          {
+            name: 'function:allowanceScheduler'
+            instanceCount: 1
+          }
+        ]
         maximumInstanceCount: 40
         instanceMemoryMB: 2048
       }
