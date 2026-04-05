@@ -37,6 +37,9 @@ param cosmosDbEndpoint string
 @description('Default hostname of the Static Web App (for CORS allowlist).')
 param swaHostname string
 
+@description('Application Insights connection string for telemetry.')
+param appInsightsConnectionString string = ''
+
 @description('Entra External ID tenant ID — used by API for JWT validation.')
 param externalIdTenantId string = ''
 
@@ -182,6 +185,36 @@ resource storageBlobRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
   }
 }
 
+// Storage Queue Data Contributor — required by the Functions runtime for
+// timer trigger leases and internal host coordination via queue storage.
+resource storageQueueRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, funcApp.id, '974c5e8b-45b9-4653-ba55-5f855dd0fb88')
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '974c5e8b-45b9-4653-ba55-5f855dd0fb88' // Storage Queue Data Contributor
+    )
+    principalId: funcApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Storage Table Data Contributor — required by the Functions runtime for
+// host instance tracking and distributed lock state.
+resource storageTableRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, funcApp.id, '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3')
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3' // Storage Table Data Contributor
+    )
+    principalId: funcApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // ---------------------------------------------------------------------------
 // App Settings — applied after KV + Storage role assignments
 // Flex Consumption doesn't use AzureWebJobsStorage connection string —
@@ -193,6 +226,20 @@ resource appSettings 'Microsoft.Web/sites/config@2023-12-01' = {
   name: 'appsettings'
   properties: {
     FUNCTIONS_EXTENSION_VERSION: '~4'
+
+    // Identity-based storage connection — Flex Consumption uses managed identity
+    // rather than a connection string. These two settings tell the Functions
+    // runtime which storage account to use and to authenticate via the
+    // system-assigned managed identity. All three storage roles (Blob, Queue,
+    // Table Data Contributor) must be assigned for the host to start healthy.
+    // Without AzureWebJobsStorage__accountName the timer trigger cannot run.
+    AzureWebJobsStorage__accountName: storageAccount.name
+    AzureWebJobsStorage__credential: 'managedidentity'
+
+    // Application Insights — enables logging, live metrics, and distributed tracing.
+    // Without this the Functions host still runs but all telemetry is lost.
+    APPLICATIONINSIGHTS_CONNECTION_STRING: appInsightsConnectionString
+    ApplicationInsightsAgent_EXTENSION_VERSION: '~3'
 
     // Cosmos DB endpoint — the Function App connects via managed identity.
     // The 'Cosmos DB Built-in Data Contributor' SQL role is assigned above.
@@ -207,7 +254,7 @@ resource appSettings 'Microsoft.Web/sites/config@2023-12-01' = {
     // App URL — used to build invite deep-links in outbound emails
     APP_URL: 'https://${swaHostname}'
   }
-  dependsOn: [cosmosDataContributorRole, storageBlobRole]
+  dependsOn: [cosmosDataContributorRole, storageBlobRole, storageQueueRole, storageTableRole]
 }
 
 // ---------------------------------------------------------------------------

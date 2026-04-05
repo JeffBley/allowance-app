@@ -85,6 +85,20 @@ module staticWebApp './modules/staticWebApp.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
+// Application Insights + Log Analytics — telemetry for the Function App
+// ---------------------------------------------------------------------------
+
+module appInsights './modules/appInsights.bicep' = {
+  name: 'appInsights'
+  scope: rg
+  params: {
+    location: location
+    tags: tags
+    name: 'appi-allow-${take(resourceToken, 12)}'
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Azure Functions — Consumption plan, JWT-secured HTTP API + scheduler
 // Depends on SWA hostname (for CORS) and Key Vault (for secrets).
 // ---------------------------------------------------------------------------
@@ -103,6 +117,7 @@ module functionApp './modules/functionApp.bicep' = {
     swaHostname: staticWebApp.outputs.defaultHostname
     externalIdTenantId: externalIdTenantId
     externalIdClientId: externalIdClientId
+    appInsightsConnectionString: appInsights.outputs.connectionString
   }
 }
 
