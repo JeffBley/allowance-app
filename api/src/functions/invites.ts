@@ -51,7 +51,7 @@ async function listInvites(
     return { status: 200, jsonBody: { codes } };
   } catch (err) {
     context.error('invites GET error', err);
-    return { status: 500, jsonBody: { code: 'INTERNAL_ERROR' } };
+    return { status: 500, jsonBody: { code: 'INTERNAL_ERROR', message: 'Failed to fetch invite codes.' } };
   }
 }
 
@@ -198,7 +198,7 @@ async function generateInvite(
     };
   } catch (err) {
     context.error('invites POST error', err);
-    return { status: 500, jsonBody: { code: 'INTERNAL_ERROR' } };
+    return { status: 500, jsonBody: { code: 'INTERNAL_ERROR', message: 'Failed to generate invite code.' } };
   }
 }
 
@@ -221,7 +221,7 @@ async function revokeInvite(
     return { status: 204 };
   } catch (err) {
     context.error('invites DELETE error', err);
-    return { status: 500, jsonBody: { code: 'INTERNAL_ERROR' } };
+    return { status: 500, jsonBody: { code: 'INTERNAL_ERROR', message: 'Failed to revoke invite code.' } };
   }
 }
 
@@ -285,7 +285,7 @@ async function updateInvite(
     };
   } catch (err) {
     context.error('invites PATCH error', err);
-    return { status: 500, jsonBody: { code: 'INTERNAL_ERROR' } };
+    return { status: 500, jsonBody: { code: 'INTERNAL_ERROR', message: 'Failed to update invite code.' } };
   }
 }
 

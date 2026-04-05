@@ -301,6 +301,14 @@ async function redeemInvite(request: HttpRequest, context: InvocationContext): P
       }
     } // end if/else link vs regular flow
 
+    // Delete the invite code — it has been fully consumed and no longer needs to be retained.
+    // A failure here is non-fatal: the enrollment is complete and the code is already marked used.
+    try {
+      await inviteContainer.item(code, code).delete();
+    } catch (deleteErr) {
+      context.warn(`invite/redeem: could not delete consumed invite code '${code}' — enrollment still succeeded.`, deleteErr);
+    }
+
     context.log(`invite/redeem: enrolled oid '${oid}' into family '${invite.familyId}' as '${invite.role}'`);
 
     return {
