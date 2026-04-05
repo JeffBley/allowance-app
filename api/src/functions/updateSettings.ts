@@ -36,7 +36,7 @@ async function updateSettings(request: HttpRequest, context: InvocationContext):
     return { status: 400, jsonBody: { code: 'INVALID_SETTINGS', message: 'allowanceEnabled must be a boolean.' } };
   }
   if (ks.allowanceEnabled) {
-    if (typeof ks.allowanceAmount !== 'number' || ks.allowanceAmount <= 0 || ks.allowanceAmount > 10000) {
+    if (typeof ks.allowanceAmount !== 'number' || isNaN(ks.allowanceAmount) || !isFinite(ks.allowanceAmount) || ks.allowanceAmount <= 0 || ks.allowanceAmount > 10000) {
       return { status: 400, jsonBody: { code: 'INVALID_SETTINGS', message: 'allowanceAmount must be a positive number no greater than 10,000.' } };
     }
     if (!['Weekly', 'Bi-weekly', 'Monthly'].includes(ks.allowanceFrequency)) {
@@ -65,9 +65,13 @@ async function updateSettings(request: HttpRequest, context: InvocationContext):
     return { status: 400, jsonBody: { code: 'INVALID_SETTINGS', message: 'dayOfWeek must be an integer between 0 (Sunday) and 6 (Saturday).' } };
   }
 
-  // Validate optional biweeklyStartDate (ISO 8601)
-  if (ks.biweeklyStartDate !== undefined && isNaN(Date.parse(ks.biweeklyStartDate))) {
-    return { status: 400, jsonBody: { code: 'INVALID_SETTINGS', message: 'biweeklyStartDate must be a valid ISO 8601 date string.' } };
+  // Validate optional biweeklyStartDate (ISO 8601) and normalize to prevent non-zero-padded
+  // strings (e.g. "2025-1-5") from causing inconsistent comparisons (same fix as KI-0066).
+  if (ks.biweeklyStartDate !== undefined) {
+    if (isNaN(Date.parse(ks.biweeklyStartDate))) {
+      return { status: 400, jsonBody: { code: 'INVALID_SETTINGS', message: 'biweeklyStartDate must be a valid ISO 8601 date string.' } };
+    }
+    ks.biweeklyStartDate = new Date(ks.biweeklyStartDate).toISOString();
   }
 
   // M-3: Validate hourlyWageRate when hourlyWagesEnabled is true
@@ -132,8 +136,9 @@ async function updateSettings(request: HttpRequest, context: InvocationContext):
     }
 
     // Optionally update displayName if provided
+    // Strip control characters first (consistent with updateMemberName, localMembers, superadmin/members)
     const newDisplayName = typeof body.displayName === 'string'
-      ? body.displayName.trim().replace(/\s+/g, ' ')
+      ? body.displayName.trim().replace(/[\x00-\x1f\x7f]/g, '').replace(/\s+/g, ' ')
       : undefined;
     if (newDisplayName !== undefined && (newDisplayName.length === 0 || newDisplayName.length > 60)) {
       return { status: 400, jsonBody: { code: 'INVALID_NAME', message: 'Display name must be between 1 and 60 characters.' } };

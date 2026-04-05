@@ -81,7 +81,8 @@ async function updateFamily(familyId: string, request: HttpRequest, context: Inv
 
     const updated: Family = {
       ...existing,
-      name: body.name.trim(),
+      // Strip control characters for consistency with member/chore name sanitization
+      name: body.name.trim().replace(/[\x00-\x1f\x7f]/g, ''),
       memberLimit: body.memberLimit ?? existing.memberLimit,
     };
     await container.item(familyId, familyId).replace(updated);

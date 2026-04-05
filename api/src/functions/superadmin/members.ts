@@ -19,6 +19,10 @@ async function createMember(familyId: string, request: HttpRequest, context: Inv
     if (typeof body?.oid !== 'string' || !body.oid.trim()) {
       return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: '\'oid\' is required.' } };
     }
+    // Entra OIDs are UUID v4 GUIDs — validate format to prevent corrupt data
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.oid.trim())) {
+      return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: '\'oid\' must be a valid UUID (GUID) format.' } };
+    }
     if (typeof body?.displayName !== 'string' || !body.displayName.trim()) {
       return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: '\'displayName\' is required.' } };
     }

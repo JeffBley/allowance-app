@@ -170,7 +170,8 @@ async function generateInvite(
       role:            body.role,
       // kidSettings not pre-set for family-admin invites — configured post-enrollment
       kidSettings:     undefined,
-      displayNameHint: body.displayNameHint?.trim() || undefined,
+      // Strip control characters for consistency with other display-name writes (KI-0058 fix)
+      displayNameHint: body.displayNameHint?.trim().replace(/[\x00-\x1f\x7f]/g, '') || undefined,
       localMemberOid:  resolvedLocalMemberOid,
       createdAt:       now.toISOString(),
       expiresAt,
@@ -263,7 +264,8 @@ async function updateInvite(
 
     const updated: InviteCode = {
       ...invite,
-      displayNameHint: body.displayNameHint?.trim() || undefined,
+      // Strip control characters for consistency with other display-name writes (KI-0058 fix)
+      displayNameHint: body.displayNameHint?.trim().replace(/[\x00-\x1f\x7f]/g, '') || undefined,
     };
     await container.item(code, code).replace(updated);
     context.log(`family admin: updated invite '${code}' for family '${familyId}'`);

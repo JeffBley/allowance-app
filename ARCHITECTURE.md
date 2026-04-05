@@ -146,7 +146,7 @@ Request
 | `GET` | `/api/transactions` | Any | Returns transactions for the caller's family (filterable by date) |
 | `GET` | `/api/auditLog` | `FamilyAdmin` | Returns audit log entries |
 | `POST` | `/api/transactions` | `FamilyAdmin` | Add a transaction (Income / Purchase / Tithing) |
-| `PUT` | `/api/transactions/{id}` | `FamilyAdmin` | Edit a transaction |
+| `PATCH` | `/api/transactions/{id}` | `FamilyAdmin` | Edit a transaction |
 | `DELETE` | `/api/transactions/{id}` | `FamilyAdmin` | Delete a transaction |
 | `PUT` | `/api/settings/{kidOid}` | `FamilyAdmin` | Update allowance settings for a kid |
 | `PUT` | `/api/balanceOverride/{kidOid}` | `FamilyAdmin` | Manually set balance floor for a kid |
