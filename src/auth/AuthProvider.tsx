@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { MsalProvider, useMsal, useIsAuthenticated } from '@azure/msal-react';
-import { msalInstance, loginRequest } from './msalConfig';
+import { msalInstance, loginRequest, getSignInEmail } from './msalConfig';
 
 // ---------------------------------------------------------------------------
 // Module-level boot error — set by main.tsx before React renders so that
@@ -53,10 +53,26 @@ export function LoginGate({ children }: LoginGateProps) {
       // the default sign-in form — new users following an invite likely don't
       // have an account yet.
       const hasInvite = new URLSearchParams(window.location.search).has('invite');
+
+      // CIAM tenants use a GUID-based UPN (e.g. abc123@bleytech.onmicrosoft.com)
+      // as account.username. MSAL automatically passes this as login_hint when
+      // there is a cached active account, which causes AADSTS165000 because
+      // login.live.com cannot find a Microsoft account with a GUID UPN.
+      // Fix: extract the real email from the cached account and pass it explicitly
+      // as loginHint — this overrides MSAL's default UPN-based hint.
+      const cachedAccount = instance.getActiveAccount() ?? instance.getAllAccounts()[0] ?? null;
+      const emailHint = cachedAccount ? getSignInEmail(cachedAccount) : '';
+
       await instance.loginRedirect({
         ...loginRequest,
         redirectStartPage: window.location.href,
-        ...(hasInvite ? { prompt: 'create' } : {}),
+        ...(emailHint ? { loginHint: emailHint } : {}),
+        // prompt:'login' tells Entra CIAM to always show the credential form and
+        // NOT attempt a silent fast-auth via an existing (possibly expired) SSO
+        // session cookie. Without this, CIAM tries to reuse the SSO session and
+        // throws AADSTS165000 "Token was not provided" after a day's inactivity.
+        // Invite flows override with prompt:'create' to show the sign-up form.
+        prompt: hasInvite ? 'create' : 'login',
       });
     } catch (err) {
       console.error('[LoginGate] Sign-in error:', err instanceof Error ? err.message : String(err));

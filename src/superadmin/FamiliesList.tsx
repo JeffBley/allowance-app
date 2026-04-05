@@ -15,6 +15,7 @@ export default function FamiliesList({ onSelectFamily }: Props) {
   const [createError, setCreateError] = useState<string | null>(null)
   const [deleting, setDeleting]     = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<SaFamily | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -60,6 +61,11 @@ export default function FamiliesList({ onSelectFamily }: Props) {
     }
   }
 
+  const q = searchQuery.trim().toLowerCase()
+  const visibleFamilies = q
+    ? families.filter(f => f.name.toLowerCase().includes(q) || f.id.toLowerCase().includes(q))
+    : families
+
   return (
     <div className="sa-page">
       <div className="sa-page-header">
@@ -100,6 +106,20 @@ export default function FamiliesList({ onSelectFamily }: Props) {
         </form>
       )}
 
+      {/* Search bar */}
+      {!loading && families.length > 0 && (
+        <div className="sa-search-bar">
+          <input
+            className="sa-form-input"
+            type="search"
+            placeholder="Search by family name or ID…"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            aria-label="Search families"
+          />
+        </div>
+      )}
+
       {/* Error banner */}
       {error && <p className="sa-error-banner" role="alert">{error} <button className="sa-link" onClick={load}>Retry</button></p>}
 
@@ -113,8 +133,15 @@ export default function FamiliesList({ onSelectFamily }: Props) {
         </div>
       )}
 
+      {/* No search results */}
+      {!loading && families.length > 0 && visibleFamilies.length === 0 && (
+        <div className="sa-empty">
+          <p>No families match &ldquo;{searchQuery.trim()}&rdquo;.</p>
+        </div>
+      )}
+
       {/* Families table */}
-      {!loading && families.length > 0 && (
+      {!loading && visibleFamilies.length > 0 && (
         <div className="table-wrapper">
           <table className="transactions-table sa-table">
             <thead>
@@ -127,7 +154,7 @@ export default function FamiliesList({ onSelectFamily }: Props) {
               </tr>
             </thead>
             <tbody>
-              {families.map(f => (
+              {visibleFamilies.map(f => (
                 <tr key={f.id}>
                   <td><code className="sa-code">{f.id}</code></td>
                   <td className="sa-family-name">{f.name}</td>

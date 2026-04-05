@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   getFamily, updateFamily, deleteFamily,
   createMember, createLocalMember, updateMember, deleteMember,
-  listInvites, generateInvite, revokeInvite, sendInviteEmail,
+  generateInvite, sendInviteEmail,
   purgeTransactions, purgeAuditLog,
   SaApiError,
   type SaFamily, type SaMember, type CreateMemberPayload, type SaInviteCode, type GenerateInvitePayload,
@@ -76,20 +76,8 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
   const [wizardSendingEmail, setWizardSendingEmail]     = useState(false)
   const [wizardInviteError, setWizardInviteError]       = useState<string | null>(null)
 
-  // Invite codes
-  const [invites, setInvites]               = useState<SaInviteCode[]>([])
-  const [invitesLoading, setInvitesLoading] = useState(false)
-  const [newCode, setNewCode]               = useState<SaInviteCode | null>(null)
-  const [revokingCode, setRevokingCode]     = useState<string | null>(null)
-  const [confirmRevokeCode, setConfirmRevokeCode] = useState<SaInviteCode | null>(null)
-  const [regeneratingCode, setRegeneratingCode]   = useState<string | null>(null)
-
-  // Email invite (on existing codes)
-  const [emailInvite, setEmailInvite]   = useState<SaInviteCode | null>(null)
-  const [emailAddress, setEmailAddress] = useState('')
-  const [sendingEmail, setSendingEmail] = useState(false)
-  const [emailError, setEmailError]     = useState<string | null>(null)
-  const [emailSuccess, setEmailSuccess] = useState(false)
+  // Newly generated invite code (shown after wizard generates one)
+  const [newCode, setNewCode] = useState<SaInviteCode | null>(null)
 
   // Purge Data wizard
   type PurgeType = 'transactions' | 'audit-log'
@@ -119,62 +107,9 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
     }
   }, [familyId])
 
-  const loadInvites = useCallback(async () => {
-    setInvitesLoading(true)
-    try {
-      const data = await listInvites(familyId)
-      setInvites(data)
-    } catch { /* non-fatal — invites section shows error inline */ }
-    finally { setInvitesLoading(false) }
-  }, [familyId])
+  useEffect(() => { load() }, [load])
 
-  useEffect(() => { load(); loadInvites() }, [load, loadInvites])
 
-  async function handleRevokeInvite(invite: SaInviteCode) {
-    setRevokingCode(invite.code)
-    setConfirmRevokeCode(null)
-    try {
-      await revokeInvite(familyId, invite.code)
-      setInvites(prev => prev.filter(c => c.code !== invite.code))
-      if (newCode?.code === invite.code) setNewCode(null)
-    } catch (err) {
-      setError(err instanceof SaApiError ? err.message : 'Failed to revoke invite.')
-    } finally {
-      setRevokingCode(null)
-    }
-  }
-
-  async function handleRegenerateInvite(invite: SaInviteCode) {
-    setRegeneratingCode(invite.code)
-    try {
-      const payload: GenerateInvitePayload = {
-        role: invite.role,
-        displayNameHint: invite.displayNameHint ?? undefined,
-      }
-      const created = await generateInvite(familyId, payload)
-      setNewCode(created)
-      setInvites(prev => [created, ...prev])
-    } catch (err) {
-      setError(err instanceof SaApiError ? err.message : 'Failed to generate invite.')
-    } finally {
-      setRegeneratingCode(null)
-    }
-  }
-
-  async function handleSendEmail(e: React.FormEvent) {
-    e.preventDefault()
-    if (!emailInvite) return
-    setEmailError(null)
-    setSendingEmail(true)
-    try {
-      await sendInviteEmail(familyId, emailInvite.code, emailAddress.trim())
-      setEmailSuccess(true)
-    } catch (err) {
-      setEmailError(err instanceof SaApiError ? err.message : 'Failed to send email.')
-    } finally {
-      setSendingEmail(false)
-    }
-  }
 
   async function handleSaveName(e: React.FormEvent) {
     e.preventDefault()
@@ -249,7 +184,6 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
       }
       const created = await generateInvite(familyId, payload)
       setNewCode(created)
-      setInvites(prev => [created, ...prev])
       setShowAddMemberWizard(false)
       setAddMemberMode('choose')
       setWizardInviteNameHint('')
@@ -272,7 +206,6 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
       }
       const created = await generateInvite(familyId, payload)
       setNewCode(created)
-      setInvites(prev => [created, ...prev])
       try {
         await sendInviteEmail(familyId, created.code, wizardInviteEmail.trim())
       } catch {
@@ -508,7 +441,7 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
                         <td className="sa-member-name">{m.displayName}</td>
                         <td>
                           <span className={`sa-role-badge sa-role-badge--${m.role === 'FamilyAdmin' ? 'admin' : m.isLocalAccount ? 'local' : 'user'}`}>
-                            {m.role}{m.isLocalAccount ? ' · Local' : ''}
+                            {m.role === 'FamilyAdmin' ? 'Family Admin' : m.role}{m.isLocalAccount ? ' · Local' : ''}
                           </span>
                         </td>
                         <td><code className="sa-code sa-code--sm">{m.oid}</code></td>
@@ -606,7 +539,7 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
                       value={wizardInviteRole}
                       onChange={e => setWizardInviteRole(e.target.value as 'User' | 'FamilyAdmin')}
                     >
-                      <option value="FamilyAdmin">FamilyAdmin (parent/manager)</option>
+                      <option value="FamilyAdmin">Family Admin (parent/manager)</option>
                       <option value="User">User (kid with allowance)</option>
                     </select>
                   </div>
@@ -713,7 +646,7 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
                   value={form.role}
                   onChange={e => setField('role', e.target.value as 'User' | 'FamilyAdmin')}
                 >
-                  <option value="FamilyAdmin">FamilyAdmin (parent/manager)</option>
+                  <option value="FamilyAdmin">Family Admin (parent/manager)</option>
                   <option value="User">User (kid with allowance)</option>
                 </select>
               </div>
@@ -729,205 +662,6 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* ── Invite Codes section ── */}
-      {family && !loading && (
-        <>
-          <div className="sa-section-header" style={{ marginTop: 8 }}>
-            <h3 className="sa-section-title">Invite Codes</h3>
-            <button
-              className="btn btn--primary btn--sm"
-              onClick={() => { setShowAddMemberWizard(true); setAddMemberMode('invite'); setWizardInviteRole('FamilyAdmin'); setWizardInviteNameHint(''); setWizardInviteEmail(''); setWizardInviteError(null) }}
-            >
-              + Generate Invite
-            </button>
-          </div>
-
-          {/* Newly generated code — prominent display for copying */}
-          {newCode && (
-            <div className="sa-invite-new-code">
-              <p className="sa-invite-new-code__label">
-                ✅ New invite code generated — share this with {newCode.displayNameHint ?? 'the recipient'}:
-              </p>
-              <div className="sa-invite-code-display">
-                <code className="sa-invite-code-value">{newCode.code}</code>
-                <button
-                  className="btn btn--secondary btn--sm"
-                  type="button"
-                  onClick={() => navigator.clipboard.writeText(newCode.code)}
-                >
-                  Copy
-                </button>
-              </div>
-              <p className="sa-invite-new-code__hint">
-                Role: <strong>{newCode.role}</strong> · Expires:{' '}
-                {new Date(newCode.expiresAt).toLocaleDateString()} · Single use
-              </p>
-              <button
-                className="sa-link"
-                type="button"
-                style={{ fontSize: '0.8rem' }}
-                onClick={() => setNewCode(null)}
-              >
-                Dismiss
-              </button>
-            </div>
-          )}
-
-          {invitesLoading && (
-            <div className="sa-loading"><div className="app-loading__spinner" /></div>
-          )}
-
-          {!invitesLoading && invites.length === 0 && (
-            <div className="sa-empty" style={{ padding: '20px 0' }}>
-              <p>No invite codes. Generate one above.</p>
-            </div>
-          )}
-
-          {invites.length > 0 && (
-            <div className="table-wrapper">
-              <table className="transactions-table sa-table">
-                <thead>
-                  <tr>
-                    <th>Code</th>
-                    <th>Role</th>
-                    <th>Name Hint</th>
-                    <th>Expires</th>
-                    <th>Status</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {invites.map(inv => (
-                    <tr key={inv.code}>
-                      <td><code className="sa-code">{inv.code}</code></td>
-                      <td>
-                        <span className={`sa-role-badge sa-role-badge--${inv.role === 'FamilyAdmin' ? 'admin' : 'user'}`}>
-                          {inv.role}
-                        </span>
-                      </td>
-                      <td>{inv.displayNameHint ?? '—'}</td>
-                      <td className="td-date">{new Date(inv.expiresAt).toLocaleDateString()}</td>
-                      <td>
-                        {inv.used
-                          ? <span className="sa-invite-status sa-invite-status--used">Activated</span>
-                          : inv.expired
-                            ? <span className="sa-invite-status sa-invite-status--expired">Expired</span>
-                            : <span className="sa-invite-status sa-invite-status--active">Pending</span>
-                        }
-                      </td>
-                      <td className="td-actions">
-                        {!inv.used && !inv.expired && (
-                          <>
-                            <button
-                              className="btn-action btn-action--edit"
-                              onClick={() => { setEmailInvite(inv); setEmailAddress(''); setEmailError(null); setEmailSuccess(false) }}
-                              disabled={revokingCode === inv.code}
-                              style={{ marginRight: 4 }}
-                            >
-                              Send Email
-                            </button>
-                            <button
-                              className="btn-action btn-action--delete"
-                              onClick={() => setConfirmRevokeCode(inv)}
-                              disabled={revokingCode === inv.code}
-                            >
-                              {revokingCode === inv.code ? '…' : 'Revoke'}
-                            </button>
-                          </>
-                        )}
-                        {inv.expired && (
-                          <button
-                            className="btn-action btn-action--edit"
-                            onClick={() => handleRegenerateInvite(inv)}
-                            disabled={regeneratingCode === inv.code}
-                          >
-                            {regeneratingCode === inv.code ? '…' : 'Generate New Code'}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Send invite email */}
-      {emailInvite && (
-        <div className="sa-dialog-overlay" role="dialog" aria-modal="true" aria-labelledby="sa-email-inv-title">
-          <div className="sa-dialog">
-            <p className="sa-dialog__title" id="sa-email-inv-title">Send Invite Email</p>
-            {emailSuccess ? (
-              <div className="sa-dialog__body">
-                <p>✅ Invite email sent to <strong>{emailAddress}</strong>.</p>
-              </div>
-            ) : (
-              <form onSubmit={handleSendEmail}>
-                <div className="sa-dialog__body">
-                  <p style={{ marginBottom: 12 }}>
-                    Send the invite code for{' '}
-                    <strong>{emailInvite.displayNameHint ?? 'this recipient'}</strong> to an email address.
-                  </p>
-                  <div className="sa-form-group">
-                    <label className="form-label" htmlFor="sa-email-addr">Email Address</label>
-                    <input
-                      id="sa-email-addr"
-                      className="form-input"
-                      type="email"
-                      placeholder="recipient@example.com"
-                      maxLength={254}
-                      value={emailAddress}
-                      onChange={e => setEmailAddress(e.target.value)}
-                      autoFocus
-                      required
-                    />
-                  </div>
-                  {emailError && <p className="sa-form-error" role="alert">{emailError}</p>}
-                </div>
-                <div className="sa-dialog__actions">
-                  <button type="button" className="btn btn--secondary"
-                    onClick={() => setEmailInvite(null)} disabled={sendingEmail}>Cancel</button>
-                  <button type="submit" className="btn btn--primary"
-                    disabled={sendingEmail || !emailAddress.trim()}>
-                    {sendingEmail ? 'Sending…' : 'Send Email'}
-                  </button>
-                </div>
-              </form>
-            )}
-            {emailSuccess && (
-              <div className="sa-dialog__actions">
-                <button className="btn btn--primary" onClick={() => setEmailInvite(null)}>Done</button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Confirm revoke invite */}
-      {confirmRevokeCode && (
-        <div className="sa-dialog-overlay" role="alertdialog" aria-modal="true">
-          <div className="sa-dialog">
-            <p className="sa-dialog__title">Revoke Invite Code?</p>
-            <div className="sa-dialog__body">
-              <p>
-                Revoke code <code>{confirmRevokeCode.code}</code>? The recipient will no longer
-                be able to use it to join.
-              </p>
-            </div>
-            <div className="sa-dialog__actions">
-              <button className="btn btn--secondary" onClick={() => setConfirmRevokeCode(null)}>
-                Cancel
-              </button>
-              <button className="btn btn--danger" onClick={() => handleRevokeInvite(confirmRevokeCode)}>
-                Revoke
-              </button>
-            </div>
           </div>
         </div>
       )}

@@ -2728,6 +2728,8 @@ body {
 .sa-section-title   { font-size: 1rem; font-weight: 600; color: #1e293b; margin: 0; }
 .sa-body-text       { font-size: 0.9rem; color: #475569; margin: 0; line-height: 1.6; }
 .sa-action-section  { display: flex; flex-direction: column; gap: 12px; padding: 20px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 10px; }
+.sa-search-bar      { display: flex; align-items: center; max-width: 400px; }
+.sa-search-bar .sa-form-input { width: 100%; }
 
 /* ---- Breadcrumb ---- */
 .sa-breadcrumb       { display: flex; align-items: center; gap: 6px; font-size: 0.875rem; color: #64748b; }

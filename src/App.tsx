@@ -25,6 +25,8 @@ export default function App() {
   const [chores, setChores]           = useState<Chore[]>([])
   const [loading, setLoading]         = useState(true)
   const [errorCode, setErrorCode]     = useState<string | null>(null)
+  const [errorDetail, setErrorDetail] = useState<{ status?: number; apiCode?: string; message?: string; source?: string; ts: string } | null>(null)
+  const [refreshError, setRefreshError] = useState<string | null>(null)
   const retryTimerRef                 = useRef<ReturnType<typeof setTimeout> | null>(null)
   // null = "not chosen yet"; will show RolePicker for multi-role users
   const [activeView, setActiveView]   = useState<ActiveView | null>(null)
@@ -45,20 +47,33 @@ export default function App() {
     // Load all family data. On first load after a full sign-in Entra may still
     // be propagating a session policy change, causing a transient auth failure.
     // We retry once after a short delay before surfacing an error to the user.
+    //
+    // Each fetch is wrapped with a label so that when it fails we can report
+    // exactly which API call is responsible (family / transactions / audit-log / chores).
+    function labelledFetch<T>(label: string, path: string): Promise<T> {
+      return apiFetch<T>(path).catch((err: unknown) => {
+        // Attach the source label to the error object so the catch handler can read it
+        if (err != null && typeof err === 'object') {
+          (err as Record<string, unknown>)['_source'] = label
+        }
+        throw err
+      })
+    }
+
     const loadData = () =>
-      apiFetch<FamilyData>('family')
+      labelledFetch<FamilyData>('family', 'family')
         .then(data => {
           setFamilyData(data)
-          const txnPromise = apiFetch<{ transactions: Transaction[] }>('transactions')
+          const txnPromise = labelledFetch<{ transactions: Transaction[] }>('transactions', 'transactions')
             .then(r => setAllTxns(r.transactions))
           const promises: Promise<unknown>[] = [txnPromise]
           if (data.currentUserRole === 'FamilyAdmin') {
             promises.push(
-              apiFetch<{ entries: AuditLogEntry[] }>('audit-log')
+              labelledFetch<{ entries: AuditLogEntry[] }>('audit-log', 'audit-log')
                 .then(r => setAuditLog(r.entries))
             )
             promises.push(
-              apiFetch<{ chores: Chore[] }>('chores')
+              labelledFetch<{ chores: Chore[] }>('chores', 'chores')
                 .then(r => setChores(r.chores))
             )
           }
@@ -73,7 +88,16 @@ export default function App() {
           loadData()
             .then(() => setLoading(false))
             .catch((err: unknown) => {
-              if (err && typeof err === 'object' && 'status' in err && (err as { status: number }).status === 404) {
+              // Capture structured error detail for display to the user.
+              const e = err as Record<string, unknown>
+              const status = typeof e?.['status'] === 'number' ? (e['status'] as number) : undefined
+              const body = e?.['body'] as Record<string, unknown> | undefined
+              const apiCode = typeof body?.['code'] === 'string' ? (body['code'] as string) : undefined
+              const message = typeof body?.['message'] === 'string' ? (body['message'] as string) : undefined
+              const source = typeof e?.['_source'] === 'string' ? (e['_source'] as string) : undefined
+              setErrorDetail({ status, apiCode, message, source, ts: new Date().toISOString() })
+
+              if (status === 404) {
                 setErrorCode('not-enrolled')
               } else {
                 console.error('[App] Failed to load family data:', err)
@@ -172,6 +196,16 @@ export default function App() {
   }
 
   if (errorCode || !familyData) {
+    // Build a short reference string the user can share for troubleshooting.
+    const errorRef = errorDetail
+      ? [
+          errorDetail.source ? `api/${errorDetail.source}` : null,
+          errorDetail.status ? `HTTP ${errorDetail.status}` : null,
+          errorDetail.apiCode ?? null,
+          errorDetail.ts,
+        ].filter(Boolean).join(' · ')
+      : null
+
     return (
       <div className="app-error">
         <div className="app-error__card">
@@ -180,7 +214,20 @@ export default function App() {
           <p style={{ fontSize: '0.8rem', color: '#64748b', marginTop: 8 }}>
             If the problem persists, sign out and sign back in.
           </p>
-          <button className="btn btn-secondary" onClick={handleSignOut}>Sign out</button>
+          {errorRef && (
+            <div style={{ marginTop: 12, background: '#f1f5f9', borderRadius: 6, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <code style={{ fontSize: '0.72rem', color: '#475569', flex: 1, wordBreak: 'break-all' }}>{errorRef}</code>
+              <button
+                className="btn btn--secondary btn--sm"
+                style={{ flexShrink: 0 }}
+                onClick={() => navigator.clipboard.writeText(errorRef)}
+                title="Copy error details"
+              >
+                Copy
+              </button>
+            </div>
+          )}
+          <button className="btn btn-secondary" onClick={handleSignOut} style={{ marginTop: 12 }}>Sign out</button>
         </div>
       </div>
     )
@@ -206,6 +253,21 @@ export default function App() {
         </button>
       </div>
 
+      {/* Non-fatal refresh error banner — shown when onDataChange fails mid-session */}
+      {refreshError && (
+        <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 6, margin: '8px 16px 0', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12, fontSize: '0.85rem', color: '#b91c1c' }}>
+          <span style={{ flex: 1 }}>⚠ Refresh failed — showing last loaded data. <code style={{ fontSize: '0.75rem', color: '#7f1d1d', wordBreak: 'break-all' }}>{refreshError}</code></span>
+          <button
+            className="btn btn--secondary btn--sm"
+            style={{ flexShrink: 0 }}
+            onClick={() => setRefreshError(null)}
+            aria-label="Dismiss"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {familyData.currentUserRole === 'FamilyAdmin' ? (
         <AdminApp
           familyData={familyData}
@@ -225,7 +287,19 @@ export default function App() {
                 .then(r => setAuditLog(r.entries)),
               apiFetch<{ chores: Chore[] }>('chores')
                 .then(r => setChores(r.chores)),
-            ]).catch(console.error)
+            ]).catch((err: unknown) => {
+              console.error('[App] onDataChange failed:', err)
+              const e = err as Record<string, unknown>
+              const status = typeof e?.['status'] === 'number' ? (e['status'] as number) : undefined
+              const body = e?.['body'] as Record<string, unknown> | undefined
+              const apiCode = typeof body?.['code'] === 'string' ? (body['code'] as string) : undefined
+              const parts = [
+                status ? `HTTP ${status}` : null,
+                apiCode ?? null,
+                new Date().toISOString(),
+              ].filter(Boolean).join(' · ')
+              setRefreshError(parts)
+            })
           }}
           onRefreshFamily={() => {
             // Silently re-fetch family membership so newly joined members appear

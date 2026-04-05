@@ -125,8 +125,12 @@ export function getSignInEmail(
   // preferred_username is sometimes the real email (not valid for CIAM UPNs)
   const preferred = typeof claims?.['preferred_username'] === 'string' ? (claims['preferred_username'] as string).trim() : ''
   if (preferred && preferred.includes('@') && !preferred.endsWith('.onmicrosoft.com')) return preferred;
-  // Last resort — account.username may be a GUID UPN in CIAM tenants
-  return account.username ?? '';
+  // Last resort — account.username may be a GUID UPN in CIAM tenants; apply the
+  // same onmicrosoft.com guard used above so we never return a GUID-based UPN.
+  // Returning a GUID UPN as loginHint causes AADSTS165000.
+  const username = account.username ?? '';
+  if (username && username.includes('@') && !username.endsWith('.onmicrosoft.com')) return username;
+  return '';
 }
 
 /**
