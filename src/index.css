@@ -479,6 +479,25 @@ body {
 
 .td-actions {
   white-space: nowrap;
+  text-align: center;
+  width: 1%;
+}
+
+.txn-menu-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 7px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.txn-menu-btn:hover {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
 }
 
 .btn-action {
@@ -1186,7 +1205,7 @@ body {
 
 /* Drag-to-reorder item */
 .kid-list__item--draggable {
-  padding: 0 12px;
+  padding: 10px 12px;
   gap: 10px;
   cursor: grab;
   user-select: none;

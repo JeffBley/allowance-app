@@ -1025,7 +1025,7 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
                     disabled={isBusy}
                     onClick={() => selectedAdmin.isLocalAccount ? setDeleteLocalFor(selectedAdmin) : setDeleteEnrolledFor(selectedAdmin)}
                   >
-                    {isBusy ? 'Deleting…' : 'Delete'}
+                    {isBusy ? 'Deleting…' : 'Delete user'}
                   </button>
                 </div>
               </div>

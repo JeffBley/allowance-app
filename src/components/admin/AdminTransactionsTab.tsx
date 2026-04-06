@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import type { KidView, Transaction, TransactionCategory } from '../../data/mockData'
 import { useApi } from '../../hooks/useApi'
 
@@ -246,6 +246,46 @@ export default function AdminTransactionsTab({ kids, allTransactions, onDataChan
     try { await onDataChange() } finally { setRefreshing(false) }
   }
 
+  // ── Row ellipsis menu ─────────────────────────────────────────────────────
+  // Approximate height of the 2-item menu (2 × ~40px + border/padding).
+  const TXN_MENU_HEIGHT = 92
+  const [openMenuFor, setOpenMenuFor] = useState<string | null>(null)
+  const [menuTxn, setMenuTxn]         = useState<AdminTransaction | null>(null)
+  const [menuPos, setMenuPos]         = useState<{ top: number; right: number } | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!openMenuFor) return
+    function handleClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        closeMenu()
+      }
+    }
+    function handleScroll() { closeMenu() }
+    document.addEventListener('mousedown', handleClick)
+    window.addEventListener('scroll', handleScroll, { capture: true, passive: true })
+    return () => {
+      document.removeEventListener('mousedown', handleClick)
+      window.removeEventListener('scroll', handleScroll, { capture: true })
+    }
+  }, [openMenuFor])
+
+  function openMenu(t: AdminTransaction, btn: HTMLButtonElement) {
+    if (openMenuFor === t.id) { closeMenu(); return }
+    const r = btn.getBoundingClientRect()
+    const spaceBelow = window.innerHeight - r.bottom - 4
+    const top = spaceBelow >= TXN_MENU_HEIGHT ? r.bottom + 4 : r.top - TXN_MENU_HEIGHT - 4
+    setMenuPos({ top, right: window.innerWidth - r.right })
+    setOpenMenuFor(t.id)
+    setMenuTxn(t)
+  }
+
+  function closeMenu() {
+    setOpenMenuFor(null)
+    setMenuTxn(null)
+    setMenuPos(null)
+  }
+
   return (
     <div className="transactions-tab">
       <div className="transactions-tab__toolbar">
@@ -355,8 +395,14 @@ export default function AdminTransactionsTab({ kids, allTransactions, onDataChan
                   </td>
                   <td className="td-notes">{t.notes || '—'}</td>
                   <td className="td-actions">
-                    <button className="btn-action btn-action--edit" onClick={() => openEditForm(t)}>Edit</button>
-                    <button className="btn-action btn-action--delete" onClick={() => { setConfirmDeleteTxn(t); setDeleteError(null) }}>Delete</button>
+                    <button
+                      className="txn-menu-btn"
+                      aria-label="Transaction options"
+                      aria-expanded={openMenuFor === t.id}
+                      onClick={e => openMenu(t, e.currentTarget)}
+                    >
+                      ⋮
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -603,6 +649,28 @@ export default function AdminTransactionsTab({ kids, allTransactions, onDataChan
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Row ellipsis menu (rendered at root so it floats above overflow:hidden) */}
+      {openMenuFor && menuPos && menuTxn && (
+        <div ref={menuRef}>
+          <div className="chore-menu" role="menu" style={{ position: 'fixed', top: menuPos.top, right: menuPos.right, left: 'auto' }}>
+            <button
+              className="chore-menu__item"
+              role="menuitem"
+              onClick={() => { closeMenu(); openEditForm(menuTxn) }}
+            >
+              Edit
+            </button>
+            <button
+              className="chore-menu__item chore-menu__item--delete"
+              role="menuitem"
+              onClick={() => { closeMenu(); setConfirmDeleteTxn(menuTxn); setDeleteError(null) }}
+            >
+              Delete
+            </button>
           </div>
         </div>
       )}
