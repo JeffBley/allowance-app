@@ -50,6 +50,10 @@ export default function ActivationScreen({ onEnrolled }: Props) {
   const [code, setCode]               = useState(urlInviteCode)
   const [submitting, setSubmitting]   = useState(false)
   const [error, setError]             = useState<string | null>(null)
+  const [namingFamily, setNamingFamily] = useState(false)
+  const [familyName, setFamilyName]   = useState('')
+  const [namingError, setNamingError] = useState<string | null>(null)
+  const [savingName, setSavingName]   = useState(false)
   const codeRef = useRef<HTMLInputElement>(null)
 
   const handleSignOut = () => {
@@ -96,12 +100,16 @@ export default function ActivationScreen({ onEnrolled }: Props) {
         return
       }
 
-      await apiFetch('invite/redeem', {
+      const result = await apiFetch<{ enrolled: boolean; promptFamilyName?: boolean }>('invite/redeem', {
         method: 'POST',
         body: JSON.stringify({ code: trimmedCode, displayName: resolvedName }),
       })
-      // Success — parent reloads the app to pick up the new user record
-      onEnrolled()
+      if (result.promptFamilyName) {
+        // First admin — prompt for family name before reloading
+        setNamingFamily(true)
+      } else {
+        onEnrolled()
+      }
     } catch (err: unknown) {
       // Try to extract structured error from the API response
       const apiErr = err as { status?: number; body?: RedeemErrorBody }
@@ -113,6 +121,82 @@ export default function ActivationScreen({ onEnrolled }: Props) {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  async function handleNameFamily(e: React.FormEvent) {
+    e.preventDefault()
+    setNamingError(null)
+    const trimmed = familyName.trim()
+    if (!trimmed) { setNamingError('Please enter a family name.'); return }
+    setSavingName(true)
+    try {
+      await apiFetch('family/settings', {
+        method: 'PATCH',
+        body: JSON.stringify({ familyName: trimmed }),
+      })
+      onEnrolled()
+    } catch {
+      setNamingError('Could not save the family name. You can update it later in Settings.')
+    } finally {
+      setSavingName(false)
+    }
+  }
+
+  if (namingFamily) {
+    return (
+      <div className="activation-screen">
+        <div className="activation-card">
+          <div className="activation-card__icon">🏠</div>
+          <h1 className="activation-card__title">Name Your Family</h1>
+          <p className="activation-card__hint">
+            Give your family a name that everyone will see, like <em>&ldquo;The Smith Family&rdquo;</em>.
+            You can change it later in Settings.
+          </p>
+
+          <form onSubmit={handleNameFamily} autoComplete="off" noValidate>
+            <div className="sa-form-group" style={{ marginBottom: 24 }}>
+              <label className="sa-form-label" htmlFor="family-name-input">Family name</label>
+              <input
+                id="family-name-input"
+                className="sa-form-input"
+                type="text"
+                value={familyName}
+                onChange={e => setFamilyName(e.target.value)}
+                placeholder="The Smith Family"
+                maxLength={60}
+                autoFocus
+                required
+              />
+            </div>
+
+            {namingError && (
+              <p className="sa-form-error" role="alert" style={{ marginBottom: 16 }}>
+                {namingError}
+              </p>
+            )}
+
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                className="btn btn--primary"
+                type="submit"
+                disabled={savingName || !familyName.trim()}
+                style={{ flex: 1 }}
+              >
+                {savingName ? 'Saving…' : 'Continue'}
+              </button>
+              <button
+                className="btn btn--secondary"
+                type="button"
+                disabled={savingName}
+                onClick={onEnrolled}
+              >
+                Skip
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    )
   }
 
   return (

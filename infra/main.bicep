@@ -19,6 +19,9 @@ param externalIdTenantId string = ''
 @description('App registration client ID in the External ID tenant. Set after app registration via: azd env set EXTERNAL_ID_CLIENT_ID <value>')
 param externalIdClientId string = ''
 
+@description('Custom domain for the app (e.g. allowance.bleytech.com). Set via: azd env set CUSTOM_DOMAIN <value>')
+param customDomain string = ''
+
 // ---------------------------------------------------------------------------
 // Variables
 // ---------------------------------------------------------------------------
@@ -118,6 +121,7 @@ module functionApp './modules/functionApp.bicep' = {
     externalIdTenantId: externalIdTenantId
     externalIdClientId: externalIdClientId
     appInsightsConnectionString: appInsights.outputs.connectionString
+    customDomain: customDomain
   }
 }
 

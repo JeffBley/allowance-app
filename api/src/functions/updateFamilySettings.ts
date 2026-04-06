@@ -28,10 +28,17 @@ async function updateFamilySettings(request: HttpRequest, context: InvocationCon
     return { status: 400, jsonBody: { code: 'INVALID_BODY', message: 'Request body must be valid JSON.' } };
   }
 
-  const hasChore   = typeof body.choreBasedIncomeEnabled === 'boolean';
-  const hasTithing = typeof body.tithingEnabled === 'boolean';
-  if (!hasChore && !hasTithing) {
-    return { status: 400, jsonBody: { code: 'INVALID_FIELD', message: 'Request must include choreBasedIncomeEnabled or tithingEnabled.' } };
+  const hasChore      = typeof body.choreBasedIncomeEnabled === 'boolean';
+  const hasTithing    = typeof body.tithingEnabled === 'boolean';
+  const hasFamilyName = typeof body.familyName === 'string';
+  if (!hasChore && !hasTithing && !hasFamilyName) {
+    return { status: 400, jsonBody: { code: 'INVALID_FIELD', message: 'Request must include choreBasedIncomeEnabled, tithingEnabled, or familyName.' } };
+  }
+  if (hasFamilyName) {
+    const name = (body.familyName as string).trim();
+    if (name.length < 1 || name.length > 60) {
+      return { status: 400, jsonBody: { code: 'INVALID_FIELD', message: 'familyName must be 1–60 characters.' } };
+    }
   }
 
   try {
@@ -40,18 +47,36 @@ async function updateFamilySettings(request: HttpRequest, context: InvocationCon
     if (!familyDoc) {
       return { status: 404, jsonBody: { code: 'NOT_FOUND', message: 'Family document not found.' } };
     }
+    // Capture ETag for conditional replace — prevents last-writer-wins on concurrent admin saves.
+    const familyEtag = (familyDoc as Family & { _etag?: string })._etag;
 
     const updated: Family = { ...familyDoc };
-    if (hasChore)   updated.choreBasedIncomeEnabled = body.choreBasedIncomeEnabled;
-    if (hasTithing) updated.tithingEnabled = body.tithingEnabled;
+    if (hasChore)      updated.choreBasedIncomeEnabled = body.choreBasedIncomeEnabled;
+    if (hasTithing)    updated.tithingEnabled = body.tithingEnabled;
+    if (hasFamilyName) {
+      updated.name              = (body.familyName as string).trim().replace(/[\x00-\x1f\x7f]/g, '');
+      updated.nameIsPlaceholder = false;
+    }
 
-    await familiesContainer.item(scope.familyId, scope.familyId).replace<Family>(updated);
+    try {
+      await familiesContainer.item(scope.familyId, scope.familyId).replace<Family>(
+        updated,
+        familyEtag ? { accessCondition: { type: 'IfMatch', condition: familyEtag } } : {},
+      );
+    } catch (replaceErr) {
+      const obj = replaceErr as Record<string, unknown>;
+      if (obj['code'] === 412 || obj['statusCode'] === 412) {
+        return { status: 409, jsonBody: { code: 'CONFLICT', message: 'Family settings were modified concurrently. Please reload and try again.' } };
+      }
+      throw replaceErr;
+    }
 
     return {
       status: 200,
       jsonBody: {
         choreBasedIncomeEnabled: updated.choreBasedIncomeEnabled ?? false,
-        tithingEnabled: updated.tithingEnabled ?? true,
+        tithingEnabled:          updated.tithingEnabled ?? true,
+        familyName:              updated.nameIsPlaceholder ? null : updated.name,
       },
     };
   } catch (err) {

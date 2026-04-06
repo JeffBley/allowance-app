@@ -4,7 +4,7 @@ import { InteractionRequiredAuthError } from '@azure/msal-browser'
 import { useApi } from './hooks/useApi'
 import { getDisplayName, getSignInEmail, parseAccessTokenClaims, apiTokenRequest } from './auth/msalConfig'
 import { useIsSuperAdmin } from './hooks/useAppRole'
-import type { FamilyData, KidView, AuditLogEntry, Transaction, Chore } from './data/mockData'
+import type { FamilyData, KidView, Transaction, Chore, FamilyInviteCode } from './data/mockData'
 import { computeKidView } from './data/mockData'
 import UserApp from './components/user/UserApp'
 import AdminApp from './components/admin/AdminApp'
@@ -21,8 +21,8 @@ export default function App() {
 
   const [familyData, setFamilyData]   = useState<FamilyData | null>(null)
   const [allTxns, setAllTxns]         = useState<Transaction[]>([])
-  const [auditLog, setAuditLog]       = useState<AuditLogEntry[]>([])
   const [chores, setChores]           = useState<Chore[]>([])
+  const [pendingInvites, setPendingInvites] = useState<FamilyInviteCode[]>([])
   const [loading, setLoading]         = useState(true)
   const [errorCode, setErrorCode]     = useState<string | null>(null)
   const [errorDetail, setErrorDetail] = useState<{ status?: number; apiCode?: string; message?: string; source?: string; ts: string } | null>(null)
@@ -49,7 +49,7 @@ export default function App() {
     // We retry once after a short delay before surfacing an error to the user.
     //
     // Each fetch is wrapped with a label so that when it fails we can report
-    // exactly which API call is responsible (family / transactions / audit-log / chores).
+    // exactly which API call is responsible (family / transactions / chores).
     function labelledFetch<T>(label: string, path: string): Promise<T> {
       return apiFetch<T>(path).catch((err: unknown) => {
         // Attach the source label to the error object so the catch handler can read it
@@ -69,12 +69,12 @@ export default function App() {
           const promises: Promise<unknown>[] = [txnPromise]
           if (data.currentUserRole === 'FamilyAdmin') {
             promises.push(
-              labelledFetch<{ entries: AuditLogEntry[] }>('audit-log', 'audit-log')
-                .then(r => setAuditLog(r.entries))
-            )
-            promises.push(
               labelledFetch<{ chores: Chore[] }>('chores', 'chores')
                 .then(r => setChores(r.chores))
+            )
+            promises.push(
+              labelledFetch<{ codes: FamilyInviteCode[] }>('invites', 'invites')
+                .then(r => setPendingInvites(r.codes.filter(c => !c.used && !c.expired)))
             )
           }
           return Promise.all(promises)
@@ -273,18 +273,15 @@ export default function App() {
           familyData={familyData}
           kidViews={kidViews}
           allTransactions={allTxns}
-          auditLog={auditLog}
           chores={chores}
           tithingEnabled={familyData.tithingEnabled}
           onDataChange={() => {
-            // Refresh transactions, family data, audit log, and chores
+            // Refresh transactions, family data, and chores
             return Promise.all([
               apiFetch<{ transactions: Transaction[] }>('transactions')
                 .then(r => setAllTxns(r.transactions)),
               apiFetch<FamilyData>('family')
                 .then(data => setFamilyData(data)),
-              apiFetch<{ entries: AuditLogEntry[] }>('audit-log')
-                .then(r => setAuditLog(r.entries)),
               apiFetch<{ chores: Chore[] }>('chores')
                 .then(r => setChores(r.chores)),
             ]).catch((err: unknown) => {
@@ -306,7 +303,17 @@ export default function App() {
             apiFetch<FamilyData>('family')
               .then(data => setFamilyData(data))
               .catch(console.error)
+            // Also refresh pending invites — a redeemed invite should disappear
+            apiFetch<{ codes: FamilyInviteCode[] }>('invites')
+              .then(r => setPendingInvites(r.codes.filter(c => !c.used && !c.expired)))
+              .catch(console.error)
           }}
+          onRefreshInvites={() => {
+            apiFetch<{ codes: FamilyInviteCode[] }>('invites')
+              .then(r => setPendingInvites(r.codes.filter(c => !c.used && !c.expired)))
+              .catch(console.error)
+          }}
+          pendingInvites={pendingInvites}
         />
       ) : (
         <UserApp

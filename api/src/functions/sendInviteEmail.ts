@@ -137,25 +137,25 @@ async function sendInviteEmail(request: HttpRequest, context: InvocationContext)
     ].join('\n');
 
     const htmlBody = `
-          <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; font-size: 17px; line-height: 1.55; color: #1f2937;">
-            <h2 style="color: #1d4ed8; font-size: 24px; margin: 0 0 16px;">You've been invited!</h2>
-            <p style="margin: 0 0 12px;">Hi ${recipientNameHtml},</p>
-            <p style="margin: 0 0 24px;">You've been invited to join as a <strong>${roleLabel}</strong> in the family allowance app.</p>
-            <p style="margin: 0 0 24px;">
+          <div style="font-family: sans-serif; max-width: 520px; margin: 0 auto; padding: 28px; font-size: 19px; line-height: 1.6; color: #1f2937;">
+            <h2 style="color: #1d4ed8; font-size: 28px; margin: 0 0 18px;">You've been invited!</h2>
+            <p style="margin: 0 0 14px;">Hi ${recipientNameHtml},</p>
+            <p style="margin: 0 0 28px;">You've been invited to join as a <strong>${roleLabel}</strong> in the family allowance app.</p>
+            <p style="margin: 0 0 28px;">
               <a href="${inviteLink}"
-                 style="background:#1d4ed8;color:#fff;padding:14px 28px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:17px;display:inline-block;">
+                 style="background:#1d4ed8;color:#fff;padding:16px 32px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:19px;display:inline-block;">
                 Accept Invitation
               </a>
             </p>
-            <p style="color:#374151; font-size: 16px; margin: 0 0 8px;">
+            <p style="color:#374151; font-size: 18px; margin: 0 0 10px;">
               Or enter this code manually when prompted:
             </p>
-            <p style="background:#f1f5f9; border-radius:8px; padding:16px 20px; margin:0 0 20px; text-align:center;">
-              <code style="font-size:2em; font-weight:700; letter-spacing:0.18em; color:#1d4ed8; font-family:monospace;">${code}</code>
+            <p style="background:#f1f5f9; border-radius:8px; padding:18px 24px; margin:0 0 24px; text-align:center;">
+              <code style="font-size:2.2em; font-weight:700; letter-spacing:0.18em; color:#1d4ed8; font-family:monospace;">${code}</code>
             </p>
-            <p style="color:#6b7280;font-size:15px; margin:0 0 24px;">This invite expires on ${expiresDate} and can only be used once.</p>
-            <hr style="border:none;border-top:1px solid #e5e7eb;margin:0 0 20px;"/>
-            <p style="color:#9ca3af;font-size:14px; margin:0;">If you weren't expecting this invitation, you can safely ignore this email.</p>
+            <p style="color:#6b7280;font-size:17px; margin:0 0 28px;">This invite expires on ${expiresDate} and can only be used once.</p>
+            <hr style="border:none;border-top:1px solid #e5e7eb;margin:0 0 22px;"/>
+            <p style="color:#9ca3af;font-size:16px; margin:0;">If you weren't expecting this invitation, you can safely ignore this email.</p>
           </div>
         `;
 
@@ -174,13 +174,21 @@ async function sendInviteEmail(request: HttpRequest, context: InvocationContext)
     const poller = await emailClient.beginSend(message);
 
     // Record the send attempt BEFORE awaiting completion so that even if
-    // pollUntilDone() throws (ACS transient failure), the rate window is still
-    // consumed and a rapid retry is throttled (KI-0068).
+    // the background poll throws (ACS transient failure), the rate window is
+    // still consumed and a rapid retry is throttled (KI-0068).
     lastSentAt.set(code, Date.now());
 
-    await poller.pollUntilDone();
-    context.log(`sendInviteEmail: sent invite email for code '${code}' to '${recipientEmail}'`);
+    // Return 200 immediately — the email has been submitted to ACS.
+    // pollUntilDone() only waits for ACS's delivery confirmation and can take
+    // 30-60 s, which would leave the UI stuck on "Sending…". We fire it in
+    // the background for logging/telemetry only (failures are non-fatal here).
+    poller.pollUntilDone().then(() => {
+      context.log(`sendInviteEmail: ACS confirmed delivery of invite email for code '${code}'`);
+    }).catch((err: unknown) => {
+      context.warn(`sendInviteEmail: ACS delivery poll failed for code '${code}'`, err);
+    });
 
+    context.log(`sendInviteEmail: submitted invite email for code '${code}' to ACS`);
     return { status: 200, jsonBody: { message: 'Invite email sent.' } };
   } catch (err) {
     context.error('sendInviteEmail error', err);

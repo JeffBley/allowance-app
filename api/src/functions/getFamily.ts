@@ -46,10 +46,23 @@ async function getFamily(request: HttpRequest, context: InvocationContext): Prom
       isLocalAccount,
     }));
 
+    // 5. Apply saved member order if one exists
+    const memberOrder = familyDoc?.memberOrder ?? [];
+    if (memberOrder.length > 0) {
+      sanitizedUsers.sort((a, b) => {
+        const ai = memberOrder.indexOf(a.oid);
+        const bi = memberOrder.indexOf(b.oid);
+        return (ai === -1 ? Number.MAX_SAFE_INTEGER : ai) - (bi === -1 ? Number.MAX_SAFE_INTEGER : bi);
+      });
+    }
+
     return {
       status: 200,
       jsonBody: {
         familyId:          scope.familyId,
+        // Hide the placeholder name — family admins will be prompted to set a real one
+        // on first login; until then familyName is null.
+        familyName:        familyDoc?.nameIsPlaceholder ? null : (familyDoc?.name ?? null),
         currentUserOid:    auth.payload.oid,
         currentUserRole:   scope.role,
         memberLimit:       familyDoc?.memberLimit ?? DEFAULT_MEMBER_LIMIT,

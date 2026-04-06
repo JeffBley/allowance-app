@@ -49,6 +49,9 @@ param externalIdClientId string = ''
 @description('When true, adds http://localhost:5173 to CORS allowed origins. Set to true for dev environments only.')
 param allowLocalhostCors bool = false
 
+@description('Optional custom domain (e.g. allowance.bleytech.com). When set, added to CORS allowed origins and used as APP_URL.')
+param customDomain string = ''
+
 // ---------------------------------------------------------------------------
 // Storage Account (required by Flex Consumption — identity-based connection)
 // ---------------------------------------------------------------------------
@@ -252,7 +255,8 @@ resource appSettings 'Microsoft.Web/sites/config@2023-12-01' = {
     EXTERNAL_ID_AUTHORITY: 'https://bleytech.ciamlogin.com/'
 
     // App URL — used to build invite deep-links in outbound emails
-    APP_URL: 'https://${swaHostname}'
+    // Prefer custom domain if set; fall back to default SWA hostname.
+    APP_URL: customDomain != '' ? 'https://${customDomain}' : 'https://${swaHostname}'
   }
   dependsOn: [cosmosDataContributorRole, storageBlobRole, storageQueueRole, storageTableRole]
 }
@@ -268,6 +272,7 @@ resource corsConfig 'Microsoft.Web/sites/config@2023-12-01' = {
     cors: {
       allowedOrigins: union(
         ['https://${swaHostname}'],
+        customDomain != '' ? ['https://${customDomain}'] : [],
         allowLocalhostCors ? ['http://localhost:5173'] : []
       )
       supportCredentials: false // Credentials sent via Authorization header, not cookies

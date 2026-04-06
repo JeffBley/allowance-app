@@ -55,6 +55,8 @@ export interface FamilyMember {
 /** Response from GET /api/family */
 export interface FamilyData {
   familyId: string
+  /** Display name of this family, e.g. "Bley Family". Set by SuperAdmin. */
+  familyName?: string | null
   currentUserOid: string
   currentUserRole: UserRole
   /** Maximum members allowed in this family (default 10, adjustable by SuperAdmin). */
@@ -84,6 +86,8 @@ export interface FamilyInviteCode {
   familyId: string
   role: UserRole
   displayNameHint: string | null
+  /** Pre-set allowance settings applied when the invite is redeemed */
+  kidSettings?: KidSettings | null
   /** Set for link-invite codes that will merge with an existing local account on redemption */
   localMemberOid?: string | null
   createdAt: string
@@ -99,30 +103,6 @@ export interface KidView extends FamilyMember {
   tithingOwed: number
   lastTithingPaid: string | null
   transactions: Transaction[]
-}
-
-/** Audit log entry from GET /api/audit-log */
-export interface AuditLogEntry {
-  id: string
-  familyId: string
-  action: 'edit' | 'delete' | 'member_delete'
-  performedBy: string         // oid of admin who acted
-  performedByName?: string
-  /** Actual email of the admin — preferred over name/oid for display */
-  performedByEmail?: string
-  timestamp: string           // ISO 8601
-  /** Kid this entry relates to — populated server-side, used for Cosmos-side filtering */
-  subjectOid?: string
-  // Present for 'edit' and 'delete' actions
-  targetTransactionId?: string
-  before?: Partial<Transaction> & { kidOid?: string }
-  after?: Partial<Transaction>
-  // Present for 'member_delete' action
-  memberOid?: string
-  memberDisplayName?: string
-  lastBalance?: number
-  lastTithingOwed?: number
-  transactionCount?: number
 }
 
 // ---------------------------------------------------------------------------

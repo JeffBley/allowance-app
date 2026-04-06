@@ -13,6 +13,9 @@
     },
     "externalIdClientId": {
       "value": "${EXTERNAL_ID_CLIENT_ID}"
+    },
+    "customDomain": {
+      "value": "${CUSTOM_DOMAIN}"
     }
   }
 }

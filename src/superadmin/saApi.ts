@@ -157,10 +157,10 @@ export async function listFamilies(): Promise<SaFamily[]> {
   return families
 }
 
-export async function createFamily(name: string): Promise<SaFamily> {
+export async function createFamily(): Promise<SaFamily> {
   const { family } = await apiFetch<{ family: SaFamily }>('superadmin/families', {
     method: 'POST',
-    body: JSON.stringify({ name }),
+    body: '{}',
   })
   return family
 }

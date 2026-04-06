@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { listFamilies, createFamily, deleteFamily, SaApiError, type SaFamily } from './saApi'
 
 interface Props {
-  onSelectFamily: (familyId: string) => void
+  onSelectFamily: (familyId: string, autoInvite?: boolean) => void
 }
 
 export default function FamiliesList({ onSelectFamily }: Props) {
@@ -10,7 +10,6 @@ export default function FamiliesList({ onSelectFamily }: Props) {
   const [loading, setLoading]       = useState(true)
   const [error, setError]           = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
-  const [newName, setNewName]       = useState('')
   const [creating, setCreating]     = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [deleting, setDeleting]     = useState<string | null>(null)
@@ -37,10 +36,10 @@ export default function FamiliesList({ onSelectFamily }: Props) {
     setCreateError(null)
     setCreating(true)
     try {
-      await createFamily(newName.trim())
-      setNewName('')
+      const family = await createFamily()
       setShowCreate(false)
-      await load()
+      // Navigate directly to the new family with the invite wizard pre-opened
+      onSelectFamily(family.familyId, true)
     } catch (err) {
       setCreateError(err instanceof SaApiError ? err.message : 'Failed to create family.')
     } finally {
@@ -80,26 +79,11 @@ export default function FamiliesList({ onSelectFamily }: Props) {
         <form className="sa-inline-form" onSubmit={handleCreate}>
           <h3 className="sa-inline-form__title">Create Family</h3>
           <p className="sa-form-hint" style={{ marginBottom: 10 }}>
-            A unique 8-character ID will be generated automatically.
+            A unique 8-character family ID will be generated. The first family admin to join will be prompted to set the family name.
           </p>
-          <div className="sa-form-row">
-            <div className="sa-form-group sa-form-group--grow">
-              <label className="sa-form-label" htmlFor="new-family-name">Display Name</label>
-              <input
-                id="new-family-name"
-                className="sa-form-input"
-                type="text"
-                placeholder="The Smith Family"
-                value={newName}
-                onChange={e => setNewName(e.target.value)}
-                autoFocus
-                required
-              />
-            </div>
-          </div>
           {createError && <p className="sa-form-error" role="alert">{createError}</p>}
           <div className="sa-form-actions">
-            <button className="btn btn--primary" type="submit" disabled={creating || !newName.trim()}>
+            <button className="btn btn--primary" type="submit" disabled={creating}>
               {creating ? 'Creating…' : 'Create Family'}
             </button>
           </div>

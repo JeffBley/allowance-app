@@ -210,7 +210,7 @@ All containers use `/familyId` as the partition key. Every query MUST include a 
 | `id` | string | GUID — family identifier |
 | `familyId` | string | Same as `id` (partition key) |
 | `name` | string | Family display name |
-| `memberLimit` | number? | Max members (default: 10, overridable by SA) |
+| `memberLimit` | number? | Max members (default: 15, overridable by SA) |
 | `createdAt` | ISO 8601 | — |
 
 ### `users`

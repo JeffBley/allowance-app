@@ -102,7 +102,7 @@ async function generateInvite(
       familyId,
       role:            body.role,
       kidSettings:     body.role === 'User' ? body.kidSettings : undefined,
-      displayNameHint: body.displayNameHint?.trim() || undefined,
+      displayNameHint: body.displayNameHint?.trim().replace(/[\x00-\x1f\x7f]/g, '') || undefined,
       createdAt:       now.toISOString(),
       expiresAt,
       usedByOid:       null,

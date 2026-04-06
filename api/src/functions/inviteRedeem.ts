@@ -61,6 +61,10 @@ async function redeemInvite(request: HttpRequest, context: InvocationContext): P
   const code = body.code.toLowerCase().trim();
   // Strip ASCII control characters (consistent with localMembers.ts and superadmin/members.ts)
   const displayName = body.displayName.trim().replace(/[\x00-\x1f\x7f]/g, '');
+  // A displayName composed entirely of control characters collapses to '' after stripping.
+  if (!displayName) {
+    return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: '\'displayName\' must be 1-60 characters.' } };
+  }
 
   try {
     const usersContainer  = getContainer('users');
@@ -94,11 +98,6 @@ async function redeemInvite(request: HttpRequest, context: InvocationContext): P
 
     const now = new Date();
     const nowIso = now.toISOString();
-
-    // Track whether this is a retry of a previously-claimed-but-incomplete redemption.
-    // Used later in step 7b to allow the link flow to continue past user-creation 409
-    // without returning ALREADY_ENROLLED, and in step 5b to skip expiry for retry paths.
-    const isRetry = invite.usedByOid === oid;
 
     // 5a. If this exact OID previously claimed the code but user creation failed, allow retry.
     //     Any other non-null usedByOid means a different user already redeemed it.
@@ -190,14 +189,11 @@ async function redeemInvite(request: HttpRequest, context: InvocationContext): P
         await usersContainer.items.create(linkedUser);
       } catch (createErr) {
         if ((createErr as Record<string, unknown>)?.['code'] === 409) {
-          if (isRetry) {
-            // This is a retry of a previously-claimed redemption. The Entra user was
-            // already created in the previous attempt — continue to transaction migration
-            // rather than blocking recovery with ALREADY_ENROLLED.
-            context.log(`invite/redeem link: retry path — Entra user '${oid}' already exists, continuing transaction migration`);
-          } else {
-            return { status: 409, jsonBody: { code: 'ALREADY_ENROLLED', message: 'This account is already enrolled in a family.' } };
-          }
+          // Step 3 (already-enrolled check) runs before this point and would have returned
+          // ALREADY_ENROLLED if the Entra user already existed, making this 409 branch
+          // unreachable in practice. Guard it anyway so an unexpected conflict doesn't
+          // surface as a 500.
+          return { status: 409, jsonBody: { code: 'ALREADY_ENROLLED', message: 'This account is already enrolled in a family.' } };
         } else {
           throw createErr;
         }
@@ -311,13 +307,27 @@ async function redeemInvite(request: HttpRequest, context: InvocationContext): P
 
     context.log(`invite/redeem: enrolled oid '${oid}' into family '${invite.familyId}' as '${invite.role}'`);
 
+    // For newly enrolled FamilyAdmins, check whether the family still has a placeholder
+    // name — if so tell the client to prompt for a real name.
+    let promptFamilyName = false;
+    if (invite.role === 'FamilyAdmin') {
+      try {
+        const familiesContainer = getContainer('families');
+        const { resource: familyDoc } = await familiesContainer.item(invite.familyId, invite.familyId).read<Family>();
+        promptFamilyName = familyDoc?.nameIsPlaceholder === true;
+      } catch {
+        // Non-fatal: if we can't read the family doc the client just won't be prompted.
+      }
+    }
+
     return {
       status: 201,
       jsonBody: {
-        enrolled:  true,
-        familyId:  invite.familyId,
-        role:      invite.role,
+        enrolled:         true,
+        familyId:         invite.familyId,
+        role:             invite.role,
         displayName,
+        promptFamilyName,
       },
     };
   } catch (err) {

@@ -54,11 +54,14 @@ async function purgeTransactions(
     const usersContainer = getContainer('users');
     const txnContainer   = getContainer('transactions');
 
-    // Read the kid's user document to get the override anchor date and current deltas
+    // Read the kid's user document to get the override anchor date and current deltas.
+    // Capture _etag so the final delta write can use a conditional replace, preventing
+    // a concurrent allowance scheduler advance from being silently overwritten (KI-0080).
     const { resource: kidUser } = await usersContainer.item(body.kidOid, familyId).read<User>();
     if (!kidUser) {
       return { status: 404, jsonBody: { code: 'NOT_FOUND', message: 'Kid not found in this family.' } };
     }
+    const kidUserEtag = (kidUser as User & { _etag?: string })._etag;
 
     const overrideAt = kidUser.kidSettings?.balanceOverrideAt;
 
@@ -133,7 +136,34 @@ async function purgeTransactions(
       },
       updatedAt: now,
     };
-    await usersContainer.item(body.kidOid, familyId).replace(updated);
+    // ETag-conditioned replace prevents the scheduler's concurrent nextAllowanceDate advance
+    // from being silently overwritten by this write. On 412, return 409 so the SA client
+    // can reload and retry the purge (the deleted transactions are already gone, but the
+    // delta has not yet been written — the user can issue the purge request again with the
+    // same beforeDate and only the re-accumulated delta for any remaining records is applied).
+    try {
+      await usersContainer.item(body.kidOid, familyId).replace(
+        updated,
+        kidUserEtag ? { accessCondition: { type: 'IfMatch', condition: kidUserEtag } } : {},
+      );
+    } catch (replaceErr) {
+      const obj = replaceErr as Record<string, unknown>;
+      if (obj['code'] === 412 || obj['statusCode'] === 412) {
+        context.warn(
+          `purgeTransactions: ETag conflict writing delta for kid '${body.kidOid}' — ` +
+          `${purgedCount} transactions deleted but delta not yet applied. Retry to reapply.`,
+        );
+        return {
+          status: 409,
+          jsonBody: {
+            code: 'CONFLICT',
+            message: 'Settings were modified concurrently. Some transactions were deleted — retry the purge to apply the balance delta.',
+            purgedCount,
+          },
+        };
+      }
+      throw replaceErr;
+    }
 
     context.log(
       `purgeTransactions: purged ${purgedCount}/${candidates.length} transactions for kid '${body.kidOid}'`,

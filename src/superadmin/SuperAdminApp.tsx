@@ -18,6 +18,7 @@ interface Props {
 export default function SuperAdminApp({ onSignOut, onGetToken, onSwitchView }: Props) {
   const [view, setView]               = useState<SAView>('families')
   const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null)
+  const [autoInviteForFamily, setAutoInviteForFamily] = useState(false)
   const [bootstrapEnabled, setBootstrapEnabled] = useState<boolean | null>(null)
 
   // Register the MSAL token provider synchronously during render so it is available
@@ -39,13 +40,15 @@ export default function SuperAdminApp({ onSignOut, onGetToken, onSwitchView }: P
       .catch(() => setBootstrapEnabled(null)) // If status fetch fails, hide banner (fail safe)
   }, [])
 
-  function openFamily(familyId: string) {
+  function openFamily(familyId: string, autoInvite = false) {
     setSelectedFamilyId(familyId)
+    setAutoInviteForFamily(autoInvite)
     setView('family-detail')
   }
 
   function backToFamilies() {
     setSelectedFamilyId(null)
+    setAutoInviteForFamily(false)
     setView('families')
   }
 
@@ -111,7 +114,7 @@ export default function SuperAdminApp({ onSignOut, onGetToken, onSwitchView }: P
           <FamiliesList onSelectFamily={openFamily} />
         )}
         {view === 'family-detail' && selectedFamilyId && (
-          <FamilyDetail familyId={selectedFamilyId} onBack={backToFamilies} />
+          <FamilyDetail familyId={selectedFamilyId} onBack={backToFamilies} autoInviteMode={autoInviteForFamily} />
         )}
         {view === 'settings' && (
           <BootstrapSettings onDisabled={handleBootstrapDisabled} />

@@ -13,11 +13,16 @@ export interface CosmosDocument {
 // ---------------------------------------------------------------------------
 
 /** Default maximum number of members per family. SuperAdmin can override per-family. */
-export const DEFAULT_MEMBER_LIMIT = 10;
+export const DEFAULT_MEMBER_LIMIT = 15;
 
 export interface Family extends CosmosDocument {
   name: string;
   createdAt: string; // ISO 8601
+  /**
+   * When true the family name is a system placeholder and has not been set
+   * by a family admin yet. The name should not be shown to family members.
+   */
+  nameIsPlaceholder?: boolean;
   /**
    * Maximum members allowed in this family.
    * When absent the DEFAULT_MEMBER_LIMIT constant applies.
@@ -26,8 +31,8 @@ export interface Family extends CosmosDocument {
   /** When true, admins can define chores and credit kids for completing them. */
   choreBasedIncomeEnabled?: boolean;
   /** When false, tithing UI and calculations are hidden for this family. Defaults to true. */
-  tithingEnabled?: boolean;
-}
+  tithingEnabled?: boolean;  /** Ordered list of member OIDs — defines the display order in the family member list. */
+  memberOrder?: string[];}
 
 // ---------------------------------------------------------------------------
 // Chore
@@ -269,6 +274,8 @@ export interface CompleteChoreRequest {
 export interface UpdateFamilySettingsRequest {
   choreBasedIncomeEnabled?: boolean;
   tithingEnabled?: boolean;
+  /** When provided, updates the family display name and clears nameIsPlaceholder. 1–60 chars. */
+  familyName?: string;
 }
 
 /** Standard API error shape */

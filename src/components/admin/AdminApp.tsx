@@ -1,18 +1,16 @@
-import { useState } from 'react'
-import type { FamilyData, KidView, Transaction, AuditLogEntry, Chore } from '../../data/mockData'
+import { useState, useRef, useEffect } from 'react'
+import type { FamilyData, KidView, Transaction, Chore, FamilyInviteCode } from '../../data/mockData'
 import AdminSummaryTab from './AdminSummaryTab'
 import AdminFamilyMembersTab from './AdminFamilyMembersTab'
 import AdminTransactionsTab from './AdminTransactionsTab'
 import AdminSettingsTab from './AdminSettingsTab'
-import AdminLogsTab from './AdminLogsTab'
 
-type AdminTab = 'summary' | 'family-members' | 'transactions' | 'logs' | 'settings'
+type AdminTab = 'summary' | 'family-members' | 'transactions' | 'settings'
 
 const TAB_LABELS: Record<AdminTab, string> = {
   'summary':        'Summary',
   'family-members': 'Family Members',
   'transactions':   'Transactions',
-  'logs':           'Logs',
   'settings':       'Settings',
 }
 
@@ -20,18 +18,40 @@ interface Props {
   familyData: FamilyData
   kidViews: KidView[]
   allTransactions: Transaction[]
-  auditLog: AuditLogEntry[]
   chores: Chore[]
   tithingEnabled: boolean
   onDataChange: () => void
   /** Silently re-fetches /api/family so newly joined members appear in kid list */
   onRefreshFamily: () => void
+  /** Silently re-fetches /api/invites */
+  onRefreshInvites: () => void
+  pendingInvites: FamilyInviteCode[]
 }
 
-export default function AdminApp({ familyData, kidViews, allTransactions, auditLog, chores, tithingEnabled, onDataChange, onRefreshFamily }: Props) {
+export default function AdminApp({ familyData, kidViews, allTransactions, chores, tithingEnabled, onDataChange, onRefreshFamily, onRefreshInvites, pendingInvites }: Props) {
   const [activeTab, setActiveTab]               = useState<AdminTab>('summary')
   const [pendingTab, setPendingTab]             = useState<AdminTab | null>(null)
   const [familyTabHasUnsaved, setFamilyTabHasUnsaved] = useState(false)
+
+  // ── Tab scroll-overflow indicator ──────────────────────────────────────────
+  const tabNavRef = useRef<HTMLElement | null>(null)
+  const [showScrollRight, setShowScrollRight] = useState(false)
+  const [showScrollLeft, setShowScrollLeft]   = useState(false)
+
+  useEffect(() => {
+    const el = tabNavRef.current
+    if (!el) return
+    function check() {
+      if (!el) return
+      setShowScrollLeft(el.scrollLeft > 2)
+      setShowScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 2)
+    }
+    check()
+    el.addEventListener('scroll', check, { passive: true })
+    const ro = new ResizeObserver(check)
+    ro.observe(el)
+    return () => { el.removeEventListener('scroll', check); ro.disconnect() }
+  }, [])
 
   function handleTabClick(tab: AdminTab) {
     if (tab === activeTab) return
@@ -41,7 +61,7 @@ export default function AdminApp({ familyData, kidViews, allTransactions, auditL
       setActiveTab(tab)
       // Re-fetch family data when navigating to Family Members so newly joined
       // members (via invite code) appear without requiring a full page reload.
-      if (tab === 'family-members') onRefreshFamily()
+      if (tab === 'family-members') { onRefreshFamily(); onRefreshInvites() }
     }
   }
 
@@ -60,20 +80,24 @@ export default function AdminApp({ familyData, kidViews, allTransactions, auditL
   return (
     <div className="admin-app">
       <header className="admin-header">
-        <h1 className="admin-header__title">Family Admin</h1>
+        <h1 className="admin-header__title">{familyData.familyName ?? 'Family Admin'}</h1>
       </header>
 
-      <nav className="tab-nav">
-        {(Object.keys(TAB_LABELS) as AdminTab[]).map(tab => (
-          <button
-            key={tab}
-            className={`tab-nav__btn${activeTab === tab ? ' tab-nav__btn--active' : ''}`}
-            onClick={() => handleTabClick(tab)}
-          >
-            {TAB_LABELS[tab]}
-          </button>
-        ))}
-      </nav>
+      <div className="tab-nav-wrap">
+        {showScrollLeft  && <div className="tab-nav-wrap__hint tab-nav-wrap__hint--left"  aria-hidden="true">‹</div>}
+        <nav className="tab-nav" ref={tabNavRef}>
+          {(Object.keys(TAB_LABELS) as AdminTab[]).map(tab => (
+            <button
+              key={tab}
+              className={`tab-nav__btn${activeTab === tab ? ' tab-nav__btn--active' : ''}`}
+              onClick={() => handleTabClick(tab)}
+            >
+              {TAB_LABELS[tab]}
+            </button>
+          ))}
+        </nav>
+        {showScrollRight && <div className="tab-nav-wrap__hint tab-nav-wrap__hint--right" aria-hidden="true">›</div>}
+      </div>
 
       {/* Unsaved changes confirmation (blocks tab navigation) */}
       {pendingTab && (
@@ -108,10 +132,13 @@ export default function AdminApp({ familyData, kidViews, allTransactions, auditL
         {activeTab === 'family-members' && (
           <AdminFamilyMembersTab
             kids={kidViews}
+            members={familyData.members}
+            pendingInvites={pendingInvites}
             tithingEnabled={tithingEnabled}
             onUnsavedStatusChange={setFamilyTabHasUnsaved}
             onSettingsSaved={onRefreshFamily}
             onMemberCreated={onRefreshFamily}
+            onRefreshInvites={onRefreshInvites}
             familyId={familyData.familyId}
             memberCount={familyData.members.length}
             memberLimit={familyData.memberLimit}
@@ -120,19 +147,13 @@ export default function AdminApp({ familyData, kidViews, allTransactions, auditL
         {activeTab === 'transactions' && (
           <AdminTransactionsTab kids={kidViews} allTransactions={allTransactions} onDataChange={onDataChange} />
         )}
-        {activeTab === 'logs' && (
-          <AdminLogsTab logs={auditLog} kids={kidViews} onDataChange={onDataChange} />
-        )}
         {activeTab === 'settings' && (
           <AdminSettingsTab
             familyId={familyData.familyId}
-            members={familyData.members}
-            memberCount={familyData.members.length}
-            memberLimit={familyData.memberLimit}
+            familyName={familyData.familyName}
             choreBasedIncomeEnabled={familyData.choreBasedIncomeEnabled}
             tithingEnabled={tithingEnabled}
             onDataChange={onDataChange}
-            onMemberCreated={onRefreshFamily}
           />
         )}
       </main>

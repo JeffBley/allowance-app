@@ -68,6 +68,12 @@ async function deleteTransaction(request: HttpRequest, context: InvocationContex
 
     return { status: 204 }; // No content — successful deletion
   } catch (err) {
+    // A Cosmos 404 from the .delete() call means a concurrent request already deleted this
+    // transaction. Return 404 (the resource is gone) rather than 500.
+    const errObj = err as Record<string, unknown>;
+    if (errObj['code'] === 404 || errObj['statusCode'] === 404) {
+      return { status: 404, jsonBody: { code: 'NOT_FOUND', message: 'Transaction not found.' } };
+    }
     context.error('deleteTransaction error', err);
     return { status: 500, jsonBody: { code: 'INTERNAL_ERROR', message: 'Failed to delete transaction.' } };
   }

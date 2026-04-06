@@ -39,8 +39,9 @@ async function createLocalMember(request: HttpRequest, context: InvocationContex
       return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: "'displayName' is required." } };
     }
     displayName = body.displayName.trim().replace(/[\x00-\x1f\x7f]/g, '');
-    if (displayName.length > 60) {
-      return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: "'displayName' must be ≤ 60 characters." } };
+    // A value composed entirely of control characters collapses to '' after stripping.
+    if (!displayName || displayName.length > 60) {
+      return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: "'displayName' must be 1\u201360 characters." } };
     }
   } catch {
     return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: 'Invalid JSON body.' } };

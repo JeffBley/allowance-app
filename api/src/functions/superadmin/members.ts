@@ -1,7 +1,7 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
 import { validateBootstrapSession, SA_UNAUTHORIZED } from '../../middleware/superadminAuth.js';
 import { getContainer } from '../../data/cosmosClient.js';
-import type { User, CreateMemberRequest, UpdateMemberRequest } from '../../data/models.js';
+import type { User, Transaction, CreateMemberRequest, UpdateMemberRequest } from '../../data/models.js';
 
 // ---------------------------------------------------------------------------
 // POST /api/superadmin/families/{familyId}/members     — add member to family
@@ -29,10 +29,11 @@ async function createMember(familyId: string, request: HttpRequest, context: Inv
     if (body.role !== 'User' && body.role !== 'FamilyAdmin') {
       return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: '\'role\' must be \'User\' or \'FamilyAdmin\'.' } };
     }
-    // Sanitize displayName — strip control characters
+    // Sanitize displayName — strip control characters.
+    // Re-check emptiness after stripping: a string of only control chars collapses to ''.
     body.displayName = body.displayName.trim().replace(/[\x00-\x1f\x7f]/g, '');
-    if (body.displayName.length > 100) {
-      return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: '\'displayName\' must be ≤ 100 characters.' } };
+    if (!body.displayName || body.displayName.length > 100) {
+      return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: '\'displayName\' must be 1\u2013100 characters.' } };
     }
   } catch {
     return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: 'Invalid JSON body.' } };
@@ -148,13 +149,42 @@ async function deleteMember(familyId: string, memberOid: string, request: HttpRe
   if (!session) return SA_UNAUTHORIZED;
 
   try {
-    const container = getContainer('users');
-    const { resource: existing } = await container.item(memberOid, familyId).read<User>();
+    const usersContainer = getContainer('users');
+    const { resource: existing } = await usersContainer.item(memberOid, familyId).read<User>();
     if (!existing) return { status: 404, jsonBody: { code: 'NOT_FOUND', message: 'Member not found in this family.' } };
 
-    await container.item(memberOid, familyId).delete();
-    context.log(`superadmin: deleted member '${memberOid}' from family '${familyId}'`);
-    return { status: 200, jsonBody: { deleted: { oid: memberOid, familyId } } };
+    // Delete all transactions belonging to this member before removing the user record.
+    // Without this, transaction documents with a dangling kidOid accumulate in Cosmos,
+    // appear in family-scoped GET /api/transactions results, and are never cleaned up (KI-0083).
+    const txnContainer = getContainer('transactions');
+    const { resources: txns } = await txnContainer.items
+      .query<Transaction>({
+        query: 'SELECT c.id FROM c WHERE c.familyId = @familyId AND c.kidOid = @memberOid',
+        parameters: [
+          { name: '@familyId',  value: familyId  },
+          { name: '@memberOid', value: memberOid },
+        ],
+      })
+      .fetchAll();
+
+    let deletedTxnCount = 0;
+    try {
+      await Promise.all(txns.map(async t => {
+        await txnContainer.item(t.id, familyId).delete();
+        deletedTxnCount++;
+      }));
+    } catch (txnDeleteErr) {
+      context.error(
+        `superadmin/members DELETE: partial transaction delete after ${deletedTxnCount}/${txns.length} ` +
+        `for member '${memberOid}'. User record NOT deleted.`,
+        txnDeleteErr,
+      );
+      return { status: 500, jsonBody: { code: 'INTERNAL_ERROR', message: 'Failed to delete member transactions. User record was not removed — retry.' } };
+    }
+
+    await usersContainer.item(memberOid, familyId).delete();
+    context.log(`superadmin: deleted member '${memberOid}' and ${deletedTxnCount} transaction(s) from family '${familyId}'`);
+    return { status: 200, jsonBody: { deleted: { oid: memberOid, familyId }, transactionsDeleted: deletedTxnCount } };
   } catch (err) {
     context.error('superadmin/members DELETE error', err);
     return { status: 500, jsonBody: { code: 'INTERNAL_ERROR' } };

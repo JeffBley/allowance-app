@@ -2,16 +2,17 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   getFamily, updateFamily, deleteFamily,
   createMember, createLocalMember, updateMember, deleteMember,
-  generateInvite, sendInviteEmail,
-  purgeTransactions, purgeAuditLog,
+  generateInvite, sendInviteEmail, listInvites, revokeInvite,
+  purgeTransactions,
   SaApiError,
   type SaFamily, type SaMember, type CreateMemberPayload, type SaInviteCode, type GenerateInvitePayload,
-  type PurgeTransactionsResult, type PurgeAuditLogResult,
+  type PurgeTransactionsResult,
 } from './saApi'
 
 interface Props {
   familyId: string
   onBack: () => void
+  autoInviteMode?: boolean
 }
 
 type MemberFormState = {
@@ -34,9 +35,10 @@ function buildPayload(form: MemberFormState): CreateMemberPayload {
   }
 }
 
-export default function FamilyDetail({ familyId, onBack }: Props) {
+export default function FamilyDetail({ familyId, onBack, autoInviteMode }: Props) {
   const [family, setFamily]     = useState<SaFamily | null>(null)
   const [members, setMembers]   = useState<SaMember[]>([])
+  const [invites, setInvites]   = useState<SaInviteCode[]>([])
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState<string | null>(null)
 
@@ -79,27 +81,30 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
   // Newly generated invite code (shown after wizard generates one)
   const [newCode, setNewCode] = useState<SaInviteCode | null>(null)
 
-  // Purge Data wizard
-  type PurgeType = 'transactions' | 'audit-log'
-  type PurgeWizardStep = 'type' | 'date' | 'confirm'
+  // Purge Transactions wizard
+  type PurgeWizardStep = 'date' | 'confirm'
   const [showPurgeWizard, setShowPurgeWizard]     = useState(false)
-  const [purgeWizardStep, setPurgeWizardStep]     = useState<PurgeWizardStep>('type')
-  const [purgeType, setPurgeType]                 = useState<PurgeType | null>(null)
+  const [purgeWizardStep, setPurgeWizardStep]     = useState<PurgeWizardStep>('date')
   const [purgeKidOid, setPurgeKidOid]             = useState('')
   const [purgeBeforeDate, setPurgeBeforeDate]     = useState('')
   const [purgeSubmitting, setPurgeSubmitting]     = useState(false)
   const [purgeError, setPurgeError]               = useState<string | null>(null)
-  const [purgeResult, setPurgeResult]             = useState<PurgeTransactionsResult | PurgeAuditLogResult | null>(null)
+  const [purgeResult, setPurgeResult]             = useState<PurgeTransactionsResult | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const data = await getFamily(familyId)
+      const [data, codes] = await Promise.all([
+        getFamily(familyId),
+        listInvites(familyId),
+      ])
       setFamily(data.family)
       setMembers(data.members)
       setNameValue(data.family.name)
       setLimitValue(String(data.family.memberLimit))
+      // Show only active (unused + non-expired) codes
+      setInvites(codes.filter(c => !c.used && !c.expired))
     } catch (err) {
       setError(err instanceof SaApiError ? err.message : 'Failed to load family.')
     } finally {
@@ -109,7 +114,17 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
 
   useEffect(() => { load() }, [load])
 
-
+  // When autoInviteMode is set and the family has loaded, open the invite wizard immediately.
+  useEffect(() => {
+    if (autoInviteMode && family) {
+      setShowAddMemberWizard(true)
+      setAddMemberMode('invite')
+      setWizardInviteRole('FamilyAdmin')
+      setWizardInviteError(null)
+      setWizardInviteNameHint('')
+      setWizardInviteEmail('')
+    }
+  }, [autoInviteMode, family])
 
   async function handleSaveName(e: React.FormEvent) {
     e.preventDefault()
@@ -184,6 +199,7 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
       }
       const created = await generateInvite(familyId, payload)
       setNewCode(created)
+      setInvites(prev => [created, ...prev])
       setShowAddMemberWizard(false)
       setAddMemberMode('choose')
       setWizardInviteNameHint('')
@@ -197,6 +213,11 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
 
   async function handleWizardSendWithEmail(e: React.FormEvent) {
     e.preventDefault()
+    const emailTrimmed = wizardInviteEmail.trim()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed)) {
+      setWizardInviteError('That email address doesn’t look right — please double-check it and try again.')
+      return
+    }
     setWizardInviteError(null)
     setWizardSendingEmail(true)
     try {
@@ -206,6 +227,7 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
       }
       const created = await generateInvite(familyId, payload)
       setNewCode(created)
+      setInvites(prev => [created, ...prev])
       try {
         await sendInviteEmail(familyId, created.code, wizardInviteEmail.trim())
       } catch {
@@ -229,21 +251,33 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
     }
   }
 
+  // Revoke a pending invite from the pending invites list
+  const [revokingCode, setRevokingCode] = useState<string | null>(null)
+  const [revokeError, setRevokeError]   = useState<string | null>(null)
+
+  async function handleRevokeInvite(code: string) {
+    setRevokingCode(code)
+    setRevokeError(null)
+    try {
+      await revokeInvite(familyId, code)
+      setInvites(prev => prev.filter(c => c.code !== code))
+      if (newCode?.code === code) setNewCode(null)
+    } catch (err) {
+      setRevokeError(err instanceof SaApiError ? err.message : 'Failed to revoke invite.')
+    } finally {
+      setRevokingCode(null)
+    }
+  }
+
   // Purge wizard submit
   async function handlePurgeSubmit() {
-    if (!purgeType) return
     setPurgeSubmitting(true)
     setPurgeError(null)
     setPurgeResult(null)
     try {
       const beforeDate = new Date(purgeBeforeDate + 'T00:00:00').toISOString()
-      if (purgeType === 'transactions') {
-        const result = await purgeTransactions(familyId, { kidOid: purgeKidOid, beforeDate })
-        setPurgeResult(result)
-      } else {
-        const result = await purgeAuditLog(familyId, beforeDate)
-        setPurgeResult(result)
-      }
+      const result = await purgeTransactions(familyId, { kidOid: purgeKidOid, beforeDate })
+      setPurgeResult(result)
       // purgeResult is set; wizard shows result panel
     } catch (err) {
       setPurgeError(err instanceof SaApiError ? err.message : 'Purge failed. Please try again.')
@@ -253,8 +287,7 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
   }
 
   function openPurgeWizard() {
-    setPurgeWizardStep('type')
-    setPurgeType(null)
+    setPurgeWizardStep('date')
     setPurgeKidOid(members.find(m => m.role === 'User')?.oid ?? '')
     setPurgeBeforeDate('')
     setPurgeError(null)
@@ -408,7 +441,7 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
                 className="btn btn--secondary btn--sm"
                 onClick={openPurgeWizard}
               >
-                Purge Data
+                Purge Transactions
               </button>
               <button
                 className="btn btn--primary btn--sm"
@@ -467,11 +500,59 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
         </>
       )}
 
+      {/* Pending Invites section */}
+      {invites.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <h3 className="sa-section-title" style={{ marginBottom: 8 }}>
+            Pending Invites ({invites.length})
+          </h3>
+          {revokeError && <p className="sa-form-error" role="alert" style={{ marginBottom: 8 }}>{revokeError}</p>}
+          <div className="table-wrapper">
+            <table className="transactions-table sa-table">
+              <thead>
+                <tr>
+                  <th>Code</th>
+                  <th>Name Hint</th>
+                  <th>Role</th>
+                  <th>Expires</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invites.map(inv => (
+                  <tr key={inv.code}>
+                    <td><code className="sa-code sa-code--sm">{inv.code}</code></td>
+                    <td>{inv.displayNameHint ?? <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
+                    <td>
+                      <span className={`sa-role-badge sa-role-badge--${inv.role === 'FamilyAdmin' ? 'admin' : 'user'}`}>
+                        {inv.role === 'FamilyAdmin' ? 'Family Admin' : 'User'}
+                      </span>
+                    </td>
+                    <td>{new Date(inv.expiresAt).toLocaleDateString()}</td>
+                    <td className="td-actions">
+                      <button
+                        className="btn-action btn-action--delete"
+                        onClick={() => handleRevokeInvite(inv.code)}
+                        disabled={revokingCode === inv.code}
+                      >
+                        {revokingCode === inv.code ? '…' : 'Revoke'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Add Member wizard */}
       {showAddMemberWizard && (
         <div className="sa-dialog-overlay" role="dialog" aria-modal="true" aria-labelledby="sa-add-member-wizard-title">
           <div className="sa-dialog sa-dialog--wide">
-            <p className="sa-dialog__title" id="sa-add-member-wizard-title">Add Member</p>
+            <p className="sa-dialog__title" id="sa-add-member-wizard-title">
+              {autoInviteMode ? `Add the first member for ${family?.name ?? 'this family'}` : 'Add Member'}
+            </p>
 
             {addMemberMode === 'choose' && (
               <>
@@ -549,10 +630,10 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
                   <button
                     type="button"
                     className="btn btn--secondary"
-                    onClick={() => setAddMemberMode('choose')}
+                    onClick={() => autoInviteMode ? setShowAddMemberWizard(false) : setAddMemberMode('choose')}
                     disabled={wizardGenerating || wizardSendingEmail}
                   >
-                    Back
+                    {autoInviteMode ? 'Cancel' : 'Back'}
                   </button>
                   <button
                     type="button"
@@ -687,60 +768,16 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
         </div>
       )}
 
-      {/* Purge Data wizard */}
       {showPurgeWizard && (
         <div className="sa-dialog-overlay" role="dialog" aria-modal="true" aria-labelledby="sa-purge-wizard-title">
           <div className="sa-dialog sa-dialog--wide">
-            <p className="sa-dialog__title" id="sa-purge-wizard-title">Purge Data</p>
+            <p className="sa-dialog__title" id="sa-purge-wizard-title">Purge Transactions</p>
 
-            {/* Step 1 — choose type */}
-            {purgeWizardStep === 'type' && (
-              <>
-                <div className="sa-dialog__body">
-                  <p style={{ marginBottom: 12, color: 'var(--color-text-muted, #666)' }}>
-                    What would you like to purge?
-                  </p>
-                  <div className="add-member-wizard">
-                    <button
-                      className={`add-member-wizard__option${purgeType === 'transactions' ? ' add-member-wizard__option--selected' : ''}`}
-                      onClick={() => setPurgeType('transactions')}
-                    >
-                      <span className="add-member-wizard__option-title">Transactions</span>
-                      <span className="add-member-wizard__option-desc">
-                        Permanently remove old transaction records for a child. Running balances
-                        are preserved via accumulated base values.
-                      </span>
-                    </button>
-                    <button
-                      className={`add-member-wizard__option${purgeType === 'audit-log' ? ' add-member-wizard__option--selected' : ''}`}
-                      onClick={() => setPurgeType('audit-log')}
-                    >
-                      <span className="add-member-wizard__option-title">Audit Log</span>
-                      <span className="add-member-wizard__option-desc">
-                        Permanently remove admin action log entries for this family older than
-                        a chosen date.
-                      </span>
-                    </button>
-                  </div>
-                </div>
-                <div className="sa-dialog__actions">
-                  <button className="btn btn--secondary" onClick={() => setShowPurgeWizard(false)}>Cancel</button>
-                  <button
-                    className="btn btn--primary"
-                    disabled={purgeType === null}
-                    onClick={() => { setPurgeBeforeDate(''); setPurgeKidOid(members.find(m => m.role === 'User')?.oid ?? ''); setPurgeWizardStep('date') }}
-                  >
-                    Next
-                  </button>
-                </div>
-              </>
-            )}
-
-            {/* Step 2 — date (and optional kid for transactions) */}
+            {/* Step 1 — date + optional kid */}
             {purgeWizardStep === 'date' && !purgeResult && (
               <>
                 <div className="sa-dialog__body">
-                  {purgeType === 'transactions' && members.some(m => m.role === 'User') && (
+                  {members.some(m => m.role === 'User') && (
                     <div className="sa-form-group">
                       <label className="sa-form-label" htmlFor="pw-kid">Child</label>
                       <select
@@ -758,7 +795,7 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
                   )}
                   <div className="sa-form-group">
                     <label className="sa-form-label" htmlFor="pw-date">
-                      Purge {purgeType === 'transactions' ? 'transactions' : 'log entries'} older than
+                      Purge transactions older than
                     </label>
                     <input
                       id="pw-date"
@@ -769,16 +806,13 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
                       autoFocus
                     />
                     <p className="sa-form-hint" style={{ marginTop: 6 }}>
-                      {purgeType === 'transactions'
-                        ? 'Transactions dated before this date will be permanently deleted. Running balances are unaffected.'
-                        : 'Audit log entries with a timestamp before this date will be permanently deleted.'
-                      }
+                      Transactions dated before this date will be permanently deleted. Running balances are unaffected.
                     </p>
                   </div>
                   {purgeError && <p className="sa-form-error" role="alert">{purgeError}</p>}
                 </div>
                 <div className="sa-dialog__actions">
-                  <button className="btn btn--secondary" onClick={() => { setPurgeWizardStep('type'); setPurgeError(null) }}>Back</button>
+                  <button className="btn btn--secondary" onClick={() => setShowPurgeWizard(false)}>Cancel</button>
                   <button
                     className="btn btn--danger"
                     disabled={!purgeBeforeDate}
@@ -790,7 +824,7 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
               </>
             )}
 
-            {/* Step 3 — confirm */}
+            {/* Step 2 — confirm */}
             {purgeWizardStep === 'confirm' && !purgeResult && (() => {
               const kidName = purgeKidOid ? members.find(m => m.oid === purgeKidOid)?.displayName ?? purgeKidOid : 'all children'
               const cutoff  = new Date(purgeBeforeDate + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
@@ -801,10 +835,7 @@ export default function FamilyDetail({ familyId, onBack }: Props) {
                       <p><strong>⚠️ Are you sure? This action cannot be undone.</strong></p>
                     </div>
                     <p style={{ marginTop: 12 }}>
-                      {purgeType === 'transactions'
-                        ? <>All transactions for <strong>{kidName}</strong> dated before <strong>{cutoff}</strong> will be <strong>permanently deleted</strong>.</>
-                        : <>All audit log entries before <strong>{cutoff}</strong> will be <strong>permanently deleted</strong>.</>
-                      }
+                      All transactions for <strong>{kidName}</strong> dated before <strong>{cutoff}</strong> will be <strong>permanently deleted</strong>.
                     </p>
                     {purgeError && <p className="sa-form-error" role="alert" style={{ marginTop: 12 }}>{purgeError}</p>}
                   </div>

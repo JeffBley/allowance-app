@@ -2,7 +2,7 @@ import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/fu
 import { validateBearerToken, UNAUTHORIZED, FORBIDDEN } from '../middleware/auth.js';
 import { resolveFamilyScope } from '../middleware/familyScope.js';
 import { getContainer, generateInviteCode } from '../data/cosmosClient.js';
-import type { InviteCode, Family, User, GenerateInviteRequest } from '../data/models.js';
+import type { InviteCode, Family, User, GenerateInviteRequest, KidSettings, UserRole } from '../data/models.js';
 import { DEFAULT_MEMBER_LIMIT } from '../data/models.js';
 
 // ---------------------------------------------------------------------------
@@ -40,6 +40,7 @@ async function listInvites(
       familyId:        c.familyId,
       role:            c.role,
       displayNameHint: c.displayNameHint ?? null,
+      kidSettings:     c.kidSettings ?? null,
       localMemberOid:  c.localMemberOid ?? null,
       createdAt:       c.createdAt,
       expiresAt:       c.expiresAt,
@@ -232,9 +233,9 @@ async function updateInvite(
   request: HttpRequest,
   context: InvocationContext,
 ): Promise<HttpResponseInit> {
-  let body: { displayNameHint?: string | null };
+  let body: { displayNameHint?: string | null; role?: string; kidSettings?: KidSettings | null };
   try {
-    body = await request.json() as { displayNameHint?: string | null };
+    body = await request.json() as { displayNameHint?: string | null; role?: string; kidSettings?: KidSettings | null };
   } catch {
     return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: 'Invalid JSON body.' } };
   }
@@ -243,6 +244,10 @@ async function updateInvite(
     if (typeof body.displayNameHint !== 'string' || body.displayNameHint.length > 60) {
       return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: "'displayNameHint' must be a string of at most 60 characters." } };
     }
+  }
+
+  if (body.role !== undefined && body.role !== 'User' && body.role !== 'FamilyAdmin') {
+    return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: "'role' must be 'User' or 'FamilyAdmin'." } };
   }
 
   try {
@@ -266,6 +271,8 @@ async function updateInvite(
       ...invite,
       // Strip control characters for consistency with other display-name writes (KI-0058 fix)
       displayNameHint: body.displayNameHint?.trim().replace(/[\x00-\x1f\x7f]/g, '') || undefined,
+      ...(body.role !== undefined && { role: body.role as UserRole }),
+      ...(body.kidSettings !== undefined && { kidSettings: body.kidSettings ?? undefined }),
     };
     await container.item(code, code).replace(updated);
     context.log(`family admin: updated invite '${code}' for family '${familyId}'`);
@@ -278,6 +285,7 @@ async function updateInvite(
         familyId:        updated.familyId,
         role:            updated.role,
         displayNameHint: updated.displayNameHint ?? null,
+        kidSettings:     updated.kidSettings ?? null,
         createdAt:       updated.createdAt,
         expiresAt:       updated.expiresAt,
         expired:         updated.expiresAt < now,
