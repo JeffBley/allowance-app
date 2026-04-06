@@ -411,6 +411,21 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
     Object.fromEntries(kids.map(k => [k.oid, { ...(k.kidSettings ?? DEFAULT_SETTINGS) }]))
   )
 
+  // When the kids prop changes (e.g. after an unlink converts a member to a new local OID),
+  // add any new OIDs to savedPerKid using the incoming kidSettings as the source of truth.
+  // We never overwrite existing OID entries to avoid discarding in-progress edits.
+  useEffect(() => {
+    setSavedPerKid(prev => {
+      const additions: Record<string, LocalSettings> = {}
+      for (const k of kids) {
+        if (!(k.oid in prev)) {
+          additions[k.oid] = { ...(k.kidSettings ?? DEFAULT_SETTINGS) }
+        }
+      }
+      return Object.keys(additions).length > 0 ? { ...prev, ...additions } : prev
+    })
+  }, [kids])
+
   const [edited, setEdited] = useState<LocalSettings>(() => ({
     ...(kids[0]?.kidSettings ?? DEFAULT_SETTINGS),
   }))
@@ -454,17 +469,45 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
   // ── Ellipsis context menu ─────────────────────────────────────────────────
   const [openMenuFor, setOpenMenuFor] = useState<string | null>(null)
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
+  const MEMBER_MENU_HEIGHT = 130 // approximate max height of member menu items
 
   function openMenu(oid: string, btn: HTMLButtonElement) {
     if (openMenuFor === oid) { setOpenMenuFor(null); setMenuPos(null); return }
     const r = btn.getBoundingClientRect()
-    setMenuPos({ top: r.bottom + 4, right: window.innerWidth - r.right })
+    // Always anchor the dropdown's right edge to the button's right edge so it
+    // opens leftward — identical approach to the Transactions tab.
+    const right = window.innerWidth - r.right
+    const spaceBelow = window.innerHeight - r.bottom - 4
+    const top = spaceBelow >= MEMBER_MENU_HEIGHT ? r.bottom + 4 : r.top - MEMBER_MENU_HEIGHT - 4
+    setMenuPos({ top, right })
     setOpenMenuFor(oid)
   }
 
   function closeMenu() {
     setOpenMenuFor(null)
     setMenuPos(null)
+  }
+
+  // ── Unlink enrolled account ────────────────────────────────────────────────
+  const [confirmUnlinkFor, setConfirmUnlinkFor]   = useState<FamilyMember | null>(null)
+  const [unlinkingMember, setUnlinkingMember]     = useState<string | null>(null)
+  const [unlinkError, setUnlinkError]             = useState<string | null>(null)
+
+  async function handleUnlinkConfirmed() {
+    if (!confirmUnlinkFor) return
+    const m = confirmUnlinkFor
+    setUnlinkingMember(m.oid)
+    setConfirmUnlinkFor(null)
+    setUnlinkError(null)
+    try {
+      await apiFetch(`members/${encodeURIComponent(m.oid)}/unlink`, { method: 'POST', body: '{}' })
+      onMemberCreated?.()
+    } catch (err) {
+      const apiErr = err as { body?: { message?: string } }
+      setUnlinkError(apiErr?.body?.message ?? 'Failed to remove linked account. Please try again.')
+    } finally {
+      setUnlinkingMember(null)
+    }
   }
 
   // ── Link account flow ─────────────────────────────────────────────────────
@@ -1000,7 +1043,12 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
                   {openMenuFor === selectedAdmin.oid && menuPos && (
                     <>
                       <div className="member-menu__backdrop" onClick={closeMenu} />
-                      <div className="member-menu__dropdown" style={{ position: 'fixed', top: menuPos.top, right: menuPos.right, left: 'auto' }}>
+                      <div className="member-menu__dropdown" style={{
+                        position: 'fixed',
+                        top: menuPos.top,
+                        right: menuPos.right,
+                        left: 'auto',
+                      }}>
                         <button className="member-menu__item" onClick={() => {
                           closeMenu()
                           if (selectedAdmin.isLocalAccount) { setEditingLocal(selectedAdmin); setEditLocalName(selectedAdmin.displayName); setEditLocalError(null) }
@@ -1068,7 +1116,12 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
                   return (
                     <>
                       <div className="member-menu__backdrop" onClick={closeMenu} />
-                      <div className="member-menu__dropdown" style={{ position: 'fixed', top: menuPos.top, right: menuPos.right, left: 'auto' }}>
+                      <div className="member-menu__dropdown" style={{
+                        position: 'fixed',
+                        top: menuPos.top,
+                        right: menuPos.right,
+                        left: 'auto',
+                      }}>
                         <button className="member-menu__item" onClick={() => {
                           closeMenu()
                           if (!m) return
@@ -1077,6 +1130,9 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
                         }}>Edit name</button>
                         {m?.isLocalAccount && (
                           <button className="member-menu__item" onClick={() => m && handleOpenLinkAccount(m)}>Link account</button>
+                        )}
+                        {m && !m.isLocalAccount && m.role === 'User' && (
+                          <button className="member-menu__item member-menu__item--danger" onClick={() => { closeMenu(); m && setConfirmUnlinkFor(m) }}>Remove linked account</button>
                         )}
                       </div>
                     </>
@@ -1130,27 +1186,24 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
                 </div>
               </div>
 
-              {/* Frequency */}
-              <div className="form-field">
-                <label className="form-label" htmlFor="allowance-freq">Frequency</label>
-                <select
-                  id="allowance-freq"
-                  className="form-select"
-                  value={edited.allowanceFrequency}
-                  onChange={e => updateField('allowanceFrequency', e.target.value as AllowanceFrequency)}
-                >
-                  {FREQUENCY_OPTIONS.map(f => (
-                    <option key={f} value={f}>{f}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Day of week — Weekly / Bi-weekly only */}
-              {showDayTime && (
-                <>
-                  <div className="form-field">
+              {/* Frequency + Day of Week (side-by-side on non-mobile when both visible) */}
+              {showDayTime ? (
+                <div className="form-field form-field--row">
+                  <div className="form-field-sub">
+                    <label className="form-label" htmlFor="allowance-freq">Frequency</label>
+                    <select
+                      id="allowance-freq"
+                      className="form-select"
+                      value={edited.allowanceFrequency}
+                      onChange={e => updateField('allowanceFrequency', e.target.value as AllowanceFrequency)}
+                    >
+                      {FREQUENCY_OPTIONS.map(f => (
+                        <option key={f} value={f}>{f}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-field-sub">
                     <label className="form-label" htmlFor="allowance-day">Day of the Week</label>
-                    <p className="form-hint">Which day the deposit will occur.</p>
                     <select
                       id="allowance-day"
                       className="form-select"
@@ -1162,7 +1215,21 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
                       ))}
                     </select>
                   </div>
-                </>
+                </div>
+              ) : (
+                <div className="form-field">
+                  <label className="form-label" htmlFor="allowance-freq">Frequency</label>
+                  <select
+                    id="allowance-freq"
+                    className="form-select"
+                    value={edited.allowanceFrequency}
+                    onChange={e => updateField('allowanceFrequency', e.target.value as AllowanceFrequency)}
+                  >
+                    {FREQUENCY_OPTIONS.map(f => (
+                      <option key={f} value={f}>{f}</option>
+                    ))}
+                  </select>
+                </div>
               )}
 
               {/* Monthly fixed-date notice */}
@@ -1190,11 +1257,11 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
                         onChange={e => updateField('timeOfDay', e.target.value)}
                       />
                     </div>
-                    <div className="form-field-sub form-field-sub--grow">
+                    <div className="form-field-sub">
                       <label className="form-label" htmlFor="allowance-tz">Timezone</label>
                       <select
                         id="allowance-tz"
-                        className="form-select form-select--full"
+                        className="form-select"
                         value={edited.timezone}
                         onChange={e => updateField('timezone', e.target.value)}
                       >
@@ -1516,11 +1583,11 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
                             onChange={e => updateInviteField('timeOfDay', e.target.value)}
                           />
                         </div>
-                        <div className="form-field-sub form-field-sub--grow">
+                        <div className="form-field-sub">
                           <label className="form-label" htmlFor="inv-tz">Timezone</label>
                           <select
                             id="inv-tz"
-                            className="form-select form-select--full"
+                            className="form-select"
                             value={editedInviteSettings.timezone}
                             onChange={e => updateInviteField('timezone', e.target.value)}
                           >
@@ -1633,6 +1700,38 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
             >
               Cancel
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Remove linked account confirmation ───────────────────────────── */}
+      {confirmUnlinkFor && (
+        <div className="sa-dialog-overlay" role="alertdialog" aria-modal="true">
+          <div className="sa-dialog">
+            <p className="sa-dialog__title">Remove Linked Account?</p>
+            <div className="sa-dialog__body">
+              <p>
+                This will convert <strong>{confirmUnlinkFor.displayName}</strong> to a local account.
+                Their allowance history and settings will be preserved. You can re-link them to a different
+                Microsoft account using the &ldquo;Link account&rdquo; option.
+              </p>
+            </div>
+            <div className="sa-dialog__actions">
+              <button className="btn btn--secondary" onClick={() => setConfirmUnlinkFor(null)}>Cancel</button>
+              <button className="btn btn--danger" onClick={handleUnlinkConfirmed}>Remove linked account</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {unlinkError && (
+        <div className="sa-dialog-overlay" role="alertdialog" aria-modal="true">
+          <div className="sa-dialog">
+            <p className="sa-dialog__title">Error</p>
+            <div className="sa-dialog__body"><p>{unlinkError}</p></div>
+            <div className="sa-dialog__actions">
+              <button className="btn btn--primary" onClick={() => setUnlinkError(null)}>OK</button>
+            </div>
           </div>
         </div>
       )}
