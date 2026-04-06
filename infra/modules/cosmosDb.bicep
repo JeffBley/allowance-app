@@ -61,7 +61,7 @@ resource database 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-11-15
 // Containers — all partitioned by /familyId for family-scoped data isolation
 // ---------------------------------------------------------------------------
 
-var containerNames = ['families', 'users', 'transactions', 'auditLog', 'chores']
+var containerNames = ['families', 'users', 'transactions', 'chores']
 
 resource dbContainers 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-11-15' = [
   for containerName in containerNames: {

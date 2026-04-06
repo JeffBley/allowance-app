@@ -234,6 +234,14 @@ export async function deleteMember(familyId: string, memberOid: string): Promise
   )
 }
 
+export async function unlinkMember(familyId: string, memberOid: string): Promise<SaMember> {
+  const { member } = await apiFetch<{ member: SaMember }>(
+    `superadmin/families/${encodeURIComponent(familyId)}/members/${encodeURIComponent(memberOid)}/unlink`,
+    { method: 'POST', body: '{}' },
+  )
+  return member
+}
+
 // ---------------------------------------------------------------------------
 // Invite Codes
 // ---------------------------------------------------------------------------
@@ -254,6 +262,7 @@ export interface GenerateInvitePayload {
   role: 'User' | 'FamilyAdmin'
   displayNameHint?: string
   expiryDays?: number
+  localMemberOid?: string
 }
 
 export async function listInvites(familyId: string): Promise<SaInviteCode[]> {
@@ -334,21 +343,3 @@ export async function purgeTransactions(
   )
 }
 
-// ---------------------------------------------------------------------------
-// Purge Audit Log
-// ---------------------------------------------------------------------------
-
-export interface PurgeAuditLogResult {
-  purgedCount: number
-  skippedCount: number
-}
-
-export async function purgeAuditLog(
-  familyId: string,
-  beforeDate: string,
-): Promise<PurgeAuditLogResult> {
-  return apiFetch(
-    `superadmin/families/${encodeURIComponent(familyId)}/purge-audit-log`,
-    { method: 'POST', body: JSON.stringify({ beforeDate }) },
-  )
-}

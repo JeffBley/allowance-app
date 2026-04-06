@@ -2,12 +2,10 @@ import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/fu
 import { validateBearerToken, UNAUTHORIZED, FORBIDDEN } from '../middleware/auth.js';
 import { resolveFamilyScope, NOT_ENROLLED } from '../middleware/familyScope.js';
 import { getContainer } from '../data/cosmosClient.js';
-import type { EditTransactionRequest, Transaction, AuditLogEntry } from '../data/models.js';
-import { randomUUID } from 'node:crypto';
+import type { EditTransactionRequest, Transaction } from '../data/models.js';
 
 // ---------------------------------------------------------------------------
 // PATCH /api/transactions/{id} — edit a transaction (FamilyAdmin only)
-// Records an audit log entry with before/after snapshot.
 // ---------------------------------------------------------------------------
 
 async function editTransaction(request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
@@ -98,29 +96,6 @@ async function editTransaction(request: HttpRequest, context: InvocationContext)
 
     // Persist the updated transaction
     const { resource: savedTxn } = await txnContainer.item(transactionId, scope.familyId).replace(updated);
-
-    // Write audit log entry — non-fatal: the replace is the authoritative operation.
-    // Wrapping in its own catch prevents a failed log write from returning 500
-    // after the transaction has already been mutated.
-    try {
-      const performedByEmail = typeof auth.payload['email'] === 'string' ? auth.payload['email'] : undefined;
-
-      const auditEntry: AuditLogEntry = {
-        id: randomUUID(),
-        familyId: scope.familyId,
-        action: 'edit',
-        performedBy: auth.payload.oid,
-        performedByEmail,
-        timestamp: new Date().toISOString(),
-        subjectOid: existing.kidOid,
-        targetTransactionId: transactionId,
-        before,
-        after,
-      };
-      await getContainer('auditLog').items.create(auditEntry);
-    } catch (auditErr) {
-      context.warn(`editTransaction: audit log write failed for txn ${transactionId} — transaction was updated successfully`, auditErr);
-    }
 
     return { status: 200, jsonBody: { transaction: savedTxn } };
   } catch (err) {

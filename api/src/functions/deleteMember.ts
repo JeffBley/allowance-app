@@ -2,8 +2,7 @@ import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/fu
 import { validateBearerToken, UNAUTHORIZED, FORBIDDEN } from '../middleware/auth.js';
 import { resolveFamilyScope, NOT_ENROLLED } from '../middleware/familyScope.js';
 import { getContainer } from '../data/cosmosClient.js';
-import type { User, Transaction, AuditLogEntry } from '../data/models.js';
-import { randomUUID } from 'node:crypto';
+import type { User, Transaction } from '../data/models.js';
 
 // ---------------------------------------------------------------------------
 // DELETE /api/members/{oid}
@@ -47,7 +46,7 @@ async function deleteMember(request: HttpRequest, context: InvocationContext): P
       return { status: 400, jsonBody: { code: 'USE_LOCAL_DELETE', message: 'Use DELETE /api/local-members/:oid for local accounts.' } };
     }
 
-    // Delete all transactions belonging to this user, capturing them first for the audit log
+    // Delete all transactions belonging to this user
     const txnContainer = getContainer('transactions');
     const { resources: txns } = await txnContainer.items
       .query<Transaction>({
@@ -113,30 +112,6 @@ async function deleteMember(request: HttpRequest, context: InvocationContext): P
     // Delete the user record
     await usersContainer.item(targetOid, scope.familyId).delete();
     context.log(`deleteMember: deleted member '${targetOid}' from family '${scope.familyId}'`);
-
-    // Write audit log entry capturing last known financial state
-    const performedByEmail = typeof auth.payload['email'] === 'string' ? auth.payload['email'] : undefined;
-    const auditEntry: AuditLogEntry = {
-      id:                randomUUID(),
-      familyId:          scope.familyId,
-      action:            'member_delete',
-      performedBy:       auth.payload.oid,
-      performedByEmail,
-      timestamp:         new Date().toISOString(),
-      subjectOid:        targetOid,
-      memberOid:         targetOid,
-      memberDisplayName: user.displayName,
-      lastBalance,
-      lastTithingOwed,
-      transactionCount:  txns.length,
-    };
-    // Non-fatal: member and all transactions are already irrecoverably deleted.
-    // A failed audit write must not return 500 to the client after the fact.
-    try {
-      await getContainer('auditLog').items.create(auditEntry);
-    } catch (auditErr) {
-      context.warn(`deleteMember: audit log write failed for member '${targetOid}' — deletion succeeded`, auditErr);
-    }
 
     return { status: 204 };
   } catch (err) {

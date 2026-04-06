@@ -307,6 +307,11 @@ export default function App() {
             apiFetch<{ codes: FamilyInviteCode[] }>('invites')
               .then(r => setPendingInvites(r.codes.filter(c => !c.used && !c.expired)))
               .catch(console.error)
+            // Also refresh transactions — member OIDs can change (e.g. after unlink)
+            // which would cause computeKidView to return $0 against stale kidOid values.
+            apiFetch<{ transactions: Transaction[] }>('transactions')
+              .then(r => setAllTxns(r.transactions))
+              .catch(console.error)
           }}
           onRefreshInvites={() => {
             apiFetch<{ codes: FamilyInviteCode[] }>('invites')

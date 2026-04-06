@@ -191,6 +191,83 @@ async function deleteMember(familyId: string, memberOid: string, request: HttpRe
   }
 }
 
+async function unlinkMember(familyId: string, memberOid: string, request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
+  const session = await validateBootstrapSession(request, context);
+  if (!session) return SA_UNAUTHORIZED;
+
+  try {
+    const usersContainer = getContainer('users');
+    const { resource: user } = await usersContainer.item(memberOid, familyId).read<User>();
+
+    if (!user || user.familyId !== familyId) {
+      return { status: 404, jsonBody: { code: 'NOT_FOUND', message: 'Member not found in this family.' } };
+    }
+    if (user.isLocalAccount) {
+      return { status: 409, jsonBody: { code: 'ALREADY_LOCAL', message: 'This member is already a local account.' } };
+    }
+    if (user.role !== 'User') {
+      return { status: 409, jsonBody: { code: 'INVALID_ROLE', message: 'Only User-role members can have their linked account removed.' } };
+    }
+
+    const newLocalOid = crypto.randomUUID();
+    const now = new Date().toISOString();
+
+    const newUser: User = {
+      ...user,
+      id:             newLocalOid,
+      oid:            newLocalOid,
+      isLocalAccount: true,
+      updatedAt:      now,
+    };
+    await usersContainer.items.create(newUser);
+
+    const txnContainer = getContainer('transactions');
+    const { resources: txns } = await txnContainer.items
+      .query<Transaction>({
+        query: 'SELECT * FROM c WHERE c.familyId = @familyId AND c.kidOid = @kidOid',
+        parameters: [
+          { name: '@familyId', value: familyId },
+          { name: '@kidOid',   value: memberOid },
+        ],
+      })
+      .fetchAll();
+
+    await Promise.all(txns.map(t => txnContainer.item(t.id, familyId).replace({ ...t, kidOid: newLocalOid })));
+    await usersContainer.item(memberOid, familyId).delete();
+    context.log(`superadmin: unlinked member '${memberOid}' → local '${newLocalOid}' in family '${familyId}', migrated ${txns.length} transaction(s)`);
+
+    return {
+      status: 200,
+      jsonBody: {
+        member: {
+          id:             newUser.id,
+          oid:            newUser.oid,
+          displayName:    newUser.displayName,
+          role:           newUser.role,
+          isLocalAccount: true,
+          createdAt:      newUser.createdAt,
+          updatedAt:      newUser.updatedAt,
+        },
+      },
+    };
+  } catch (err) {
+    context.error('superadmin/members unlink error', err);
+    return { status: 500, jsonBody: { code: 'INTERNAL_ERROR' } };
+  }
+}
+
+app.http('superadminMemberUnlink', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'superadmin/families/{familyId}/members/{memberOid}/unlink',
+  handler: async (req, ctx) => {
+    const familyId  = req.params['familyId'];
+    const memberOid = req.params['memberOid'];
+    if (!familyId || !memberOid) return { status: 400, jsonBody: { code: 'BAD_REQUEST' } };
+    return unlinkMember(familyId, memberOid, req, ctx);
+  },
+});
+
 app.http('superadminMembers', {
   methods: ['POST'],
   authLevel: 'anonymous',

@@ -41,9 +41,9 @@ export function getDatabase(): Database {
 
 /**
  * Returns a typed container reference.
- * @param name - One of: 'families' | 'users' | 'transactions' | 'auditLog' | 'inviteCodes'
+ * @param name - One of: 'families' | 'users' | 'transactions' | 'inviteCodes' | 'chores'
  */
-export function getContainer(name: 'families' | 'users' | 'transactions' | 'auditLog' | 'inviteCodes' | 'chores') {
+export function getContainer(name: 'families' | 'users' | 'transactions' | 'inviteCodes' | 'chores') {
   return getDatabase().container(name);
 }
 

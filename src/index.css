@@ -1311,6 +1311,14 @@ body {
   background: var(--bg-surface-2);
 }
 
+.member-menu__item--danger {
+  color: #dc2626;
+}
+
+.member-menu__item--danger:hover {
+  background: #fef2f2;
+}
+
 /* Delete button area at bottom of each member card */
 .kid-list__delete-footer {
   padding: 0 12px 10px;
@@ -2768,6 +2776,7 @@ body {
 .sa-form-input  { display: block; width: 100%; padding: 8px 12px; border: 1px solid var(--border-dark); border-radius: 6px; font-size: 0.9rem; color: #1e293b; background: #fff; box-sizing: border-box; }
 .sa-form-input:focus  { outline: none; border-color: #4a7fc1; box-shadow: 0 0 0 2px rgba(74,127,193,0.2); }
 .sa-form-input--name  { font-size: 1.1rem; font-weight: 600; }
+.sa-form-input--mono  { font-family: ui-monospace, monospace; font-size: 0.82rem; letter-spacing: 0.01em; }
 .sa-form-select { display: block; width: 100%; padding: 8px 12px; border: 1px solid var(--border-dark); border-radius: 6px; font-size: 0.9rem; color: #1e293b; background: #fff; box-sizing: border-box; }
 .sa-form-error  { font-size: 0.85rem; color: #dc2626; background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 8px 12px; margin: 0; }
 .sa-form-hint   { font-size: 0.78rem; color: #94a3b8; margin: 4px 0 0; }
@@ -2881,6 +2890,10 @@ body {
   .sa-form-row    { flex-direction: column; }
   .sa-dialog      { padding: 20px; }
   .sa-gate__card  { padding: 28px 24px; }
+  /* Prevent iOS from zooming in on focused inputs/selects */
+  .sa-form-input,
+  .sa-form-select { font-size: 16px; }
+  input, select, textarea { font-size: 16px !important; }
 }
 
 /* ============================================================

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { listFamilies, createFamily, deleteFamily, SaApiError, type SaFamily } from './saApi'
+import { listFamilies, createFamily, SaApiError, type SaFamily } from './saApi'
 
 interface Props {
   onSelectFamily: (familyId: string, autoInvite?: boolean) => void
@@ -12,8 +12,6 @@ export default function FamiliesList({ onSelectFamily }: Props) {
   const [showCreate, setShowCreate] = useState(false)
   const [creating, setCreating]     = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
-  const [deleting, setDeleting]     = useState<string | null>(null)
-  const [confirmDelete, setConfirmDelete] = useState<SaFamily | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
 
   const load = useCallback(async () => {
@@ -44,19 +42,6 @@ export default function FamiliesList({ onSelectFamily }: Props) {
       setCreateError(err instanceof SaApiError ? err.message : 'Failed to create family.')
     } finally {
       setCreating(false)
-    }
-  }
-
-  async function handleDelete(family: SaFamily) {
-    setDeleting(family.id)
-    setConfirmDelete(null)
-    try {
-      await deleteFamily(family.id)
-      setFamilies(prev => prev.filter(f => f.id !== family.id))
-    } catch (err) {
-      setError(err instanceof SaApiError ? err.message : 'Failed to delete family.')
-    } finally {
-      setDeleting(null)
     }
   }
 
@@ -142,18 +127,11 @@ export default function FamiliesList({ onSelectFamily }: Props) {
                 <tr key={f.id}>
                   <td><code className="sa-code">{f.id}</code></td>
                   <td className="sa-family-name">{f.name}</td>
-                  <td className="td-center">{f.memberCount}</td>
+                  <td>{f.memberCount}</td>
                   <td className="td-date">{new Date(f.createdAt).toLocaleDateString()}</td>
                   <td className="td-actions">
                     <button className="btn-action btn-action--edit" onClick={() => onSelectFamily(f.id)}>
                       Manage
-                    </button>
-                    <button
-                      className="btn-action btn-action--delete"
-                      onClick={() => setConfirmDelete(f)}
-                      disabled={deleting === f.id}
-                    >
-                      {deleting === f.id ? '…' : 'Delete'}
                     </button>
                   </td>
                 </tr>
@@ -163,27 +141,6 @@ export default function FamiliesList({ onSelectFamily }: Props) {
         </div>
       )}
 
-      {/* Delete confirmation dialog */}
-      {confirmDelete && (
-        <div className="sa-dialog-overlay" role="alertdialog" aria-modal="true">
-          <div className="sa-dialog">
-            <p className="sa-dialog__title">Delete Family?</p>
-            <div className="sa-dialog__body">
-              <p>This will permanently delete <strong>{confirmDelete.name}</strong> and all{' '}
-              <strong>{confirmDelete.memberCount} member(s)</strong>, transactions, and audit logs.</p>
-              <p>This cannot be undone.</p>
-            </div>
-            <div className="sa-dialog__actions">
-              <button className="btn btn--secondary" onClick={() => setConfirmDelete(null)}>
-                Cancel
-              </button>
-              <button className="btn btn--danger" onClick={() => handleDelete(confirmDelete)}>
-                Delete Everything
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

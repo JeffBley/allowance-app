@@ -163,48 +163,6 @@ export interface Transaction extends CosmosDocument {
 }
 
 // ---------------------------------------------------------------------------
-// Audit Log
-// ---------------------------------------------------------------------------
-
-export type AuditAction = 'edit' | 'delete' | 'member_delete' | 'member_rename';
-
-export interface AuditLogEntry extends CosmosDocument {
-  action: AuditAction;
-  /** oid of the FamilyAdmin who performed the action */
-  performedBy: string;
-  performedByName?: string;
-  /** Email of the admin who acted — preferred over OID for display (not GUID UPN) */
-  performedByEmail?: string;
-  timestamp: string; // ISO 8601
-  /**
-   * The kid this entry relates to — indexed top-level field used by getAuditLog
-   * to push the kidOid filter down to Cosmos instead of filtering in-memory.
-   *   edit/delete   → kidOid of the affected transaction
-   *   member_delete → oid of the deleted member
-   */
-  subjectOid?: string;
-  /** Present for 'edit' and 'delete' actions */
-  targetTransactionId?: string;
-  /** Snapshot before the change (present for edit/delete) */
-  before?: Partial<Transaction>;
-  /** Snapshot after the change (present for edit only) */
-  after?: Partial<Transaction>;
-  // Fields present only for 'member_delete' action:
-  /** OID of the deleted member */
-  memberOid?: string;
-  memberDisplayName?: string;
-  /** Last known balance at time of deletion */
-  lastBalance?: number;
-  /** Last known tithing owed at time of deletion */
-  lastTithingOwed?: number;
-  /** Number of transactions deleted alongside the member */
-  transactionCount?: number;
-  // Fields present only for 'member_rename' action:
-  /** Display name before the rename */
-  previousDisplayName?: string;
-}
-
-// ---------------------------------------------------------------------------
 // API request/response shapes
 // ---------------------------------------------------------------------------
 

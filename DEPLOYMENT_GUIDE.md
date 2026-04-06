@@ -214,15 +214,21 @@ azd provision
 
 This creates (in `rg-allowance-<env>`, East US 2 by default):
 - **Azure Cosmos DB** (serverless, `allowance-db` database, 5 containers)
-- **Azure Key Vault** (Standard, RBAC-enabled, stores Cosmos DB connection string)
+- **Azure Key Vault** (Standard, RBAC-enabled, stores bootstrap admin secret)
 - **Azure Functions** (Flex Consumption, Node 20, Linux, system-assigned identity)
 - **Azure Static Web Apps** (Free tier)
+- **Application Insights** + **Log Analytics Workspace** (30-day retention)
+- **Azure Communication Services** — Email service, AzureManagedDomain, and Communication Services resource for outbound invite emails
 
 Role assignments created by Bicep:
-- Function App identity → **Key Vault Secrets User** on Key Vault
+- Function App identity → **Cosmos DB Built-in Data Contributor** on Cosmos DB
 - Function App identity → **Storage Blob Data Contributor** on storage account
+- Function App identity → **Storage Queue Data Contributor** on storage account
+- Function App identity → **Storage Table Data Contributor** on storage account
+- Function App identity → **Key Vault Secrets User** on Key Vault
+- Function App identity → **Communication and Email Service Owner** on ACS
 
-After provisioning completes, note the output values — especially `AZURE_STATIC_WEB_APP_DEFAULT_HOSTNAME`.
+After provisioning completes, the `postprovision` hook automatically patches the Function App with the ACS endpoint and sender address — no manual step needed for email.
 
 ### 6e. Add the production redirect URI
 
@@ -237,6 +243,8 @@ https://<swa-hostname>.azurestaticapps.net/
 ## 7. Post-Provision: Bootstrap Secret
 
 The super-admin bootstrap path requires a secret stored in Key Vault and enabled via an app setting. This is a **break-glass** mechanism; see step 5 to use SSO instead.
+
+> **Note**: The Cosmos DB connection is handled via managed identity — no connection string is stored in Key Vault. Key Vault is used solely for the bootstrap admin secret (and optionally `BOOTSTRAP_JWT_SECRET`).
 
 ### 7a. Generate a strong secret
 
@@ -263,12 +271,16 @@ az keyvault secret set `
 $funcName = (azd env get-values | Select-String "AZURE_FUNCTION_APP_NAME").ToString().Split("=")[1].Trim('"')
 $rg = (azd env get-values | Select-String "AZURE_RESOURCE_GROUP").ToString().Split("=")[1].Trim('"')
 
+# Generate a second secret for signing SA session JWTs (different from the bootstrap login secret)
+$jwtSecret = [System.Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(36))
+
 az webapp config appsettings set `
   --name $funcName `
   --resource-group $rg `
   --settings `
     BOOTSTRAP_ADMIN_ENABLED=true `
-    "BOOTSTRAP_ADMIN_SECRET=$secret"
+    "BOOTSTRAP_ADMIN_SECRET=$secret" `
+    "BOOTSTRAP_JWT_SECRET=$jwtSecret"
 ```
 
 > **Security note**: Store the raw secret somewhere safe (e.g., your password manager). It is transmitted only once when logging into the bootstrap gate. After SSO super admin is working, set `BOOTSTRAP_ADMIN_ENABLED=false`.
@@ -353,11 +365,12 @@ Key values in `api/local.settings.json`:
 
 | Setting | Description |
 |---------|-------------|
-| `COSMOS_DB_CONNECTION_STRING` | Emulator connection string (pre-filled) |
+| `COSMOS_DB_CONNECTION_STRING` | Emulator connection string (pre-filled; local emulator does not support AAD) |
 | `EXTERNAL_ID_TENANT_ID` | Your External ID tenant GUID |
 | `EXTERNAL_ID_CLIENT_ID` | Your app registration client ID |
 | `BOOTSTRAP_ADMIN_ENABLED` | `"true"` to enable bootstrap login locally |
 | `BOOTSTRAP_ADMIN_SECRET` | Any string ≥ 32 chars for local testing |
+| `BOOTSTRAP_JWT_SECRET` | Any string ≥ 32 chars for signing local SA session JWTs |
 
 ---
 
@@ -433,23 +446,27 @@ az webapp config appsettings set `
 │  │  React 19 + Vite    │ HTTPS │  TypeScript / Node 20          │ │
 │  │  MSAL Auth Code +   │       │  JWT validation (auth.ts)      │ │
 │  │  PKCE               │       │  Bootstrap or SSO super admin  │ │
-│  └─────────────────────┘       └───────────┬────────────────────┘ │
-│                                            │  KV reference        │
-│                                ┌───────────▼────────┐             │
-│                                │  Key Vault          │             │
-│                                │  BootstrapSecret    │             │
-│                                │  CosmosConnString   │             │
-│                                └───────────┬────────┘             │
-│                                            │  Managed Identity    │
-│                                ┌───────────▼────────┐             │
-│                                │  Cosmos DB          │             │
-│                                │  (serverless)       │             │
-│                                │  families           │             │
-│                                │  users              │             │
-│                                │  transactions       │             │
-│                                │  inviteCodes        │             │
-│                                │  auditLog           │             │
-│                                └────────────────────┘             │
+│  └─────────────────────┘       └──┬──────────────┬─────────────┘ │
+│                                   │ MI           │ MI+telemetry  │
+│                        ┌──────────▼──────┐  ┌───▼────────────┐  │
+│                        │  Key Vault      │  │  App Insights  │  │
+│                        │  BootstrapSecret│  │  + Log Analytics│  │
+│                        └─────────────────┘  └────────────────┘  │
+│                                   │ MI                           │
+│                        ┌──────────▼──────┐                       │
+│                        │  Cosmos DB      │                       │
+│                        │  (serverless)   │                       │
+│                        │  families       │                       │
+│                        │  users          │                       │
+│                        │  transactions   │                       │
+│                        │  chores         │                       │
+│                        │  inviteCodes    │                       │
+│                        └─────────────────┘                       │
+│                                   │ MI                           │
+│                        ┌──────────▼──────┐                       │
+│                        │  ACS Email      │                       │
+│                        │  (invite emails)│                       │
+│                        └─────────────────┘                       │
 └───────────────────────────────────────────────────────────────────┘
 ```
 
@@ -465,17 +482,28 @@ Resources are named using a unique token derived from subscription ID + environm
 | Function App | `func-allow-<token12>` |
 | Static Web App | `swa-allowance-<env>` |
 | Storage account | `st<token16>` |
+| Application Insights | `appi-allow-<token12>` |
+| Log Analytics workspace | `log-appi-allow-<token12>` |
+| ACS Email service | `email-<token16>` |
+| ACS Communication Services | `acs-<token16>` |
 
 ### Environment variables injected into Function App
 
 | Setting | Source | Purpose |
 |---------|--------|---------|
-| `COSMOS_DB_CONNECTION_STRING` | Key Vault reference | Cosmos DB access |
+| `COSMOS_DB_ENDPOINT` | Bicep output | Cosmos DB account URL (MI auth) |
 | `EXTERNAL_ID_TENANT_ID` | azd env | JWT issuer validation |
 | `EXTERNAL_ID_CLIENT_ID` | azd env | JWT audience validation |
 | `EXTERNAL_ID_AUTHORITY` | Bicep hardcoded | CIAM authority base URL |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | Bicep / App Insights | Function App telemetry |
+| `AzureWebJobsStorage__accountName` | Bicep | Storage account for Flex Consumption (identity-based) |
+| `AzureWebJobsStorage__credential` | Bicep | `"managedidentity"` |
+| `APP_URL` | Bicep | Frontend URL for invite email deep-links |
+| `ACS_ENDPOINT` | postprovision hook | ACS Communication Services endpoint |
+| `ACS_SENDER_ADDRESS` | postprovision hook | ACS managed sender address |
 | `BOOTSTRAP_ADMIN_ENABLED` | Manual (step 7c) | Enable/disable bootstrap gate |
 | `BOOTSTRAP_ADMIN_SECRET` | Manual (step 7c) | Raw secret for bootstrap login |
+| `BOOTSTRAP_JWT_SECRET` | Manual (step 7c) | Signs super admin session JWTs |
 
 ### VITE environment variables (injected at build time)
 

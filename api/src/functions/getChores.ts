@@ -1,5 +1,5 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
-import { validateBearerToken, UNAUTHORIZED } from '../middleware/auth.js';
+import { validateBearerToken, UNAUTHORIZED, FORBIDDEN } from '../middleware/auth.js';
 import { resolveFamilyScope, NOT_ENROLLED } from '../middleware/familyScope.js';
 import { getContainer } from '../data/cosmosClient.js';
 import type { Chore } from '../data/models.js';
@@ -16,6 +16,7 @@ async function getChores(request: HttpRequest, context: InvocationContext): Prom
 
   const scope = await resolveFamilyScope(auth.payload.oid, context);
   if (!scope) return NOT_ENROLLED;
+  if (scope.role !== 'FamilyAdmin') return FORBIDDEN;
 
   try {
     const container = getContainer('chores');

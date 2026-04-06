@@ -3,7 +3,7 @@ import { validateBootstrapSession, SA_UNAUTHORIZED } from '../../middleware/supe
 import { getContainer, generateInviteCode } from '../../data/cosmosClient.js';
 import { EmailClient } from '@azure/communication-email';
 import { DefaultAzureCredential } from '@azure/identity';
-import type { InviteCode, GenerateInviteRequest, Family } from '../../data/models.js';
+import type { InviteCode, GenerateInviteRequest, Family, User } from '../../data/models.js';
 
 /** Escapes a string for safe inclusion in an HTML context. */
 function escapeHtml(s: string): string {
@@ -66,6 +66,11 @@ async function generateInvite(
     if (typeof body.expiryDays === 'number' && (body.expiryDays < 1 || body.expiryDays > 90)) {
       return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: '\'expiryDays\' must be between 1 and 90.' } };
     }
+    if (body.localMemberOid !== undefined && body.localMemberOid !== null) {
+      if (typeof body.localMemberOid !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.localMemberOid)) {
+        return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: "'localMemberOid' must be a valid UUID." } };
+      }
+    }
   } catch {
     return { status: 400, jsonBody: { code: 'BAD_REQUEST', message: 'Invalid JSON body.' } };
   }
@@ -76,6 +81,17 @@ async function generateInvite(
     const { resource: family } = await familiesContainer.item(familyId, familyId).read<Family>();
     if (!family) {
       return { status: 404, jsonBody: { code: 'NOT_FOUND', message: 'Family not found.' } };
+    }
+
+    // For link invites, validate the local member exists and belongs to this family
+    let resolvedLocalMemberOid: string | undefined;
+    if (body.localMemberOid) {
+      const usersContainer = getContainer('users');
+      const { resource: localUser } = await usersContainer.item(body.localMemberOid, familyId).read<User>();
+      if (!localUser || localUser.familyId !== familyId || !localUser.isLocalAccount) {
+        return { status: 404, jsonBody: { code: 'NOT_FOUND', message: 'Local member not found in this family.' } };
+      }
+      resolvedLocalMemberOid = localUser.oid;
     }
 
     const container = getContainer('inviteCodes');
@@ -103,6 +119,7 @@ async function generateInvite(
       role:            body.role,
       kidSettings:     body.role === 'User' ? body.kidSettings : undefined,
       displayNameHint: body.displayNameHint?.trim().replace(/[\x00-\x1f\x7f]/g, '') || undefined,
+      localMemberOid:  resolvedLocalMemberOid,
       createdAt:       now.toISOString(),
       expiresAt,
       usedByOid:       null,
@@ -110,7 +127,7 @@ async function generateInvite(
     };
 
     await container.items.create(invite);
-    context.log(`superadmin: generated invite code '${code}' for family '${familyId}' (role: ${body.role})`);
+    context.log(`superadmin: generated invite code '${code}' for family '${familyId}' (role: ${body.role}${resolvedLocalMemberOid ? ', link for: ' + resolvedLocalMemberOid : ''})`);
 
     return {
       status: 201,
@@ -119,6 +136,7 @@ async function generateInvite(
         familyId:        invite.familyId,
         role:            invite.role,
         displayNameHint: invite.displayNameHint ?? null,
+        localMemberOid:  invite.localMemberOid ?? null,
         createdAt:       invite.createdAt,
         expiresAt:       invite.expiresAt,
       },
@@ -139,7 +157,9 @@ async function revokeInvite(
     const { resource: invite } = await container.item(code, code).read<InviteCode>();
 
     if (!invite || invite.familyId !== familyId) {
-      return { status: 404, jsonBody: { code: 'NOT_FOUND', message: 'Invite code not found.' } };
+      // Treat as already-revoked — idempotent success so the UI doesn't show a spurious error.
+      context.log(`superadmin: revoke '${code}' — not found (already revoked or never existed), returning 204`);
+      return { status: 204 };
     }
     if (invite.usedByOid !== null) {
       return { status: 409, jsonBody: { code: 'ALREADY_USED', message: 'Code has already been redeemed and cannot be revoked.' } };

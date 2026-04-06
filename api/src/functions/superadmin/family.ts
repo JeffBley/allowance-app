@@ -39,13 +39,14 @@ async function getFamily(familyId: string, request: HttpRequest, context: Invoca
           memberLimit: family.memberLimit ?? DEFAULT_MEMBER_LIMIT,
         },
         members: members.map(m => ({
-          id:          m.id,
-          oid:         m.oid,
-          displayName: m.displayName,
-          role:        m.role,
-          kidSettings: m.kidSettings,
-          createdAt:   m.createdAt,
-          updatedAt:   m.updatedAt,
+          id:             m.id,
+          oid:            m.oid,
+          displayName:    m.displayName,
+          role:           m.role,
+          isLocalAccount: m.isLocalAccount ?? false,
+          kidSettings:    m.kidSettings,
+          createdAt:      m.createdAt,
+          updatedAt:      m.updatedAt,
         })),
       },
     };
@@ -110,7 +111,6 @@ async function deleteFamily(familyId: string, request: HttpRequest, context: Inv
     const familiesContainer = getContainer('families');
     const usersContainer    = getContainer('users');
     const txnContainer      = getContainer('transactions');
-    const logContainer      = getContainer('auditLog');
     const inviteContainer   = getContainer('inviteCodes');
 
     const { resource: existing } = await familiesContainer.item(familyId, familyId).read<Family>();
@@ -120,7 +120,6 @@ async function deleteFamily(familyId: string, request: HttpRequest, context: Inv
     const [
       { resources: users },
       { resources: txns },
-      { resources: logs },
       { resources: invites },
     ] = await Promise.all([
       usersContainer.items.query<{ id: string }>({
@@ -128,10 +127,6 @@ async function deleteFamily(familyId: string, request: HttpRequest, context: Inv
         parameters: [{ name: '@familyId', value: familyId }],
       }).fetchAll(),
       txnContainer.items.query<{ id: string }>({
-        query: 'SELECT c.id FROM c WHERE c.familyId = @familyId',
-        parameters: [{ name: '@familyId', value: familyId }],
-      }).fetchAll(),
-      logContainer.items.query<{ id: string }>({
         query: 'SELECT c.id FROM c WHERE c.familyId = @familyId',
         parameters: [{ name: '@familyId', value: familyId }],
       }).fetchAll(),
@@ -146,7 +141,6 @@ async function deleteFamily(familyId: string, request: HttpRequest, context: Inv
     await Promise.all([
       ...users.map(u    => usersContainer.item(u.id, familyId).delete()),
       ...txns.map(t     => txnContainer.item(t.id, familyId).delete()),
-      ...logs.map(l     => logContainer.item(l.id, familyId).delete()),
       // inviteCodes: partition key = code id (not familyId)
       ...invites.map(c  => inviteContainer.item(c.id, c.id).delete()),
     ]);
@@ -154,7 +148,7 @@ async function deleteFamily(familyId: string, request: HttpRequest, context: Inv
     // Delete the family document itself
     await familiesContainer.item(familyId, familyId).delete();
 
-    context.log(`superadmin: deleted family '${familyId}' + ${users.length} members, ${txns.length} txns, ${logs.length} log entries, ${invites.length} invite codes`);
+    context.log(`superadmin: deleted family '${familyId}' + ${users.length} members, ${txns.length} txns, ${invites.length} invite codes`);
     return { status: 200, jsonBody: { deleted: { familyId, memberCount: users.length } } };
   } catch (err) {
     context.error('superadmin/family DELETE error', err);
