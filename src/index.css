@@ -2877,6 +2877,12 @@ body {
 .sa-dialog__body   { font-size: 0.9rem; color: #475569; display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
 .sa-dialog__body p { margin: 0; }
 .sa-dialog__actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+@media (max-width: 480px) {
+  .sa-dialog__actions--invite { flex-wrap: wrap; }
+  .sa-dialog__actions--invite > :nth-child(2) { order: -1; flex: 1 1 100%; }
+  .sa-dialog__actions--invite > :nth-child(1),
+  .sa-dialog__actions--invite > :nth-child(3) { flex: 1; }
+}
 
 /* ---- Button sizes ---- */
 .btn--sm { padding: 5px 12px; font-size: 0.8rem; }

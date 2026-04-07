@@ -282,14 +282,12 @@ export default function FamilyDetail({ familyId, onBack, autoInviteMode }: Props
     try {
       const payload: GenerateInvitePayload = {
         role: wizardInviteRole,
-        displayNameHint: wizardInviteNameHint.trim() || undefined,
       }
       const created = await generateInvite(familyId, payload)
       setNewCode(created)
       setInvites(prev => [created, ...prev])
       setShowAddMemberWizard(false)
       setAddMemberMode('choose')
-      setWizardInviteNameHint('')
       setWizardInviteEmail('')
     } catch (err) {
       setWizardInviteError(err instanceof SaApiError ? err.message : 'Failed to generate invite.')
@@ -310,7 +308,6 @@ export default function FamilyDetail({ familyId, onBack, autoInviteMode }: Props
     try {
       const payload: GenerateInvitePayload = {
         role: wizardInviteRole,
-        displayNameHint: wizardInviteNameHint.trim() || undefined,
       }
       const created = await generateInvite(familyId, payload)
       setNewCode(created)
@@ -735,18 +732,6 @@ export default function FamilyDetail({ familyId, onBack, autoInviteMode }: Props
                     />
                   </div>
                   <div className="sa-form-group">
-                    <label className="sa-form-label" htmlFor="wiz-inv-hint">Name (optional)</label>
-                    <input
-                      id="wiz-inv-hint"
-                      className="sa-form-input"
-                      type="text"
-                      placeholder="e.g. Jacob"
-                      maxLength={60}
-                      value={wizardInviteNameHint}
-                      onChange={e => setWizardInviteNameHint(e.target.value)}
-                    />
-                  </div>
-                  <div className="sa-form-group">
                     <label className="sa-form-label" htmlFor="wiz-inv-role">Role</label>
                     <select
                       id="wiz-inv-role"
@@ -760,7 +745,7 @@ export default function FamilyDetail({ familyId, onBack, autoInviteMode }: Props
                   </div>
                   {wizardInviteError && <p className="sa-form-error" role="alert">{wizardInviteError}</p>}
                 </div>
-                <div className="sa-dialog__actions">
+                <div className="sa-dialog__actions sa-dialog__actions--invite">
                   <button
                     type="button"
                     className="btn btn--secondary"

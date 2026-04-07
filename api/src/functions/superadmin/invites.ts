@@ -270,19 +270,17 @@ app.http('superadminInviteEmail', {
       }
 
       const inviteLink        = `${appUrl}?invite=${encodeURIComponent(code)}`;
-      const recipientName     = invite.displayNameHint ?? 'there';
-      const recipientNameHtml = escapeHtml(recipientName);
       const roleLabel         = invite.role === 'FamilyAdmin' ? 'family admin' : 'family member';
       const expiresDate   = new Date(invite.expiresAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
       const emailClient = new EmailClient(acsEndpoint, new DefaultAzureCredential());
       const poller = await emailClient.beginSend({
         senderAddress: acsSenderAddress,
-        recipients: { to: [{ address: recipientEmail, displayName: recipientName }] },
+        recipients: { to: [{ address: recipientEmail }] },
         content: {
           subject: `You've been invited to join the family allowance app`,
           plainText: [
-            `Hi ${recipientName},`,
+            `Hi there,`,
             '',
             `You've been invited to join as a ${roleLabel}.`,
             '',
@@ -296,7 +294,7 @@ app.http('superadminInviteEmail', {
           html: `
             <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px;">
               <h2 style="color:#1d4ed8;">You've been invited!</h2>
-              <p>Hi ${recipientNameHtml},</p>
+              <p>Hi there,</p>
               <p>You've been invited to join as a <strong>${roleLabel}</strong>.</p>
               <p style="margin:24px 0;">
                 <a href="${inviteLink}" style="background:#1d4ed8;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold;">

@@ -22,16 +22,6 @@ import type { InviteCode } from '../data/models.js';
 // obvious injection attempts (quotes, brackets, newlines, etc.)
 const EMAIL_RE = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/
 
-/** Escapes a string for safe inclusion in an HTML context. */
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#x27;');
-}
-
 // In-memory rate limit: code -> last sent timestamp (ms).
 // Resets on cold start, which is acceptable for this low-frequency operation.
 const lastSentAt = new Map<string, number>()
@@ -104,8 +94,6 @@ async function sendInviteEmail(request: HttpRequest, context: InvocationContext)
     }
     const inviteLink = `${appUrl}?invite=${encodeURIComponent(code)}`;
 
-    const recipientName    = invite.displayNameHint ?? 'there';
-    const recipientNameHtml = escapeHtml(recipientName);
     const roleLabel = invite.role === 'FamilyAdmin' ? 'family admin' : 'family member';
     const expiresDate = new Date(invite.expiresAt).toLocaleDateString('en-US', {
       month: 'long', day: 'numeric', year: 'numeric',
@@ -117,7 +105,7 @@ async function sendInviteEmail(request: HttpRequest, context: InvocationContext)
     const subject = `You've been invited to join the family allowance app`;
 
     const plainTextBody = [
-      `Hi ${recipientName},`,
+      `Hi there,`,
       '',
       // Only include the link-account sentence for link invites (localMemberOid set).
       // For regular new-member invites this text is meaningless to the recipient.
@@ -139,7 +127,7 @@ async function sendInviteEmail(request: HttpRequest, context: InvocationContext)
     const htmlBody = `
           <div style="font-family: sans-serif; max-width: 520px; margin: 0 auto; padding: 28px; font-size: 19px; line-height: 1.6; color: #1f2937;">
             <h2 style="color: #1d4ed8; font-size: 28px; margin: 0 0 18px;">You've been invited!</h2>
-            <p style="margin: 0 0 14px;">Hi ${recipientNameHtml},</p>
+            <p style="margin: 0 0 14px;">Hi there,</p>
             <p style="margin: 0 0 28px;">You've been invited to join as a <strong>${roleLabel}</strong> in the family allowance app.</p>
             <p style="margin: 0 0 28px;">
               <a href="${inviteLink}"
@@ -162,7 +150,7 @@ async function sendInviteEmail(request: HttpRequest, context: InvocationContext)
     const message = {
       senderAddress: acsSenderAddress,
       recipients: {
-        to: [{ address: recipientEmail, displayName: recipientName }],
+        to: [{ address: recipientEmail }],
       },
       content: {
         subject,

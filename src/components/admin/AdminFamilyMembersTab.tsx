@@ -94,7 +94,7 @@ export function InviteSection({ memberCount, memberLimit, onMemberCreated, onInv
     try {
       const created = await apiFetch<FamilyInviteCode>('invites', {
         method: 'POST',
-        body: JSON.stringify({ role: inviteRole, displayNameHint: inviteNameHint.trim() || undefined }),
+        body: JSON.stringify({ role: inviteRole }),
       })
       setNewCode(created)
       onInviteCreated?.()
@@ -275,18 +275,6 @@ export function InviteSection({ memberCount, memberLimit, onMemberCreated, onInv
                     />
                   </div>
                   <div className="sa-form-group">
-                    <label className="form-label" htmlFor="finv-hint">Name (optional)</label>
-                    <input
-                      id="finv-hint"
-                      className="form-input"
-                      type="text"
-                      placeholder="e.g. Jacob"
-                      maxLength={60}
-                      value={inviteNameHint}
-                      onChange={e => setInviteNameHint(e.target.value)}
-                    />
-                  </div>
-                  <div className="sa-form-group">
                     <label className="form-label" htmlFor="finv-role">Role</label>
                     <select
                       id="finv-role"
@@ -300,7 +288,7 @@ export function InviteSection({ memberCount, memberLimit, onMemberCreated, onInv
                   </div>
                   {genError && <p className="sa-form-error" role="alert">{genError}</p>}
                 </div>
-                <div className="sa-dialog__actions">
+                <div className="sa-dialog__actions sa-dialog__actions--invite">
                   <button
                     type="button"
                     className="btn btn--secondary"
