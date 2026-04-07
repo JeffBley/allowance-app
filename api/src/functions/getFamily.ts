@@ -36,13 +36,19 @@ async function getFamily(request: HttpRequest, context: InvocationContext): Prom
       familiesContainer.item(scope.familyId, scope.familyId).read<Family>(),
     ]);
 
-    // 4. Strip sensitive fields before returning to client
+    // 4. Strip sensitive fields before returning to client.
+    // Security: User-role callers only receive their own kidSettings.
+    // Siblings' financial data (allowanceAmount, balanceOverride, etc.) is
+    // trimmed to prevent within-family information disclosure (KI-0088).
+    const callerOid = auth.payload.oid;
     const sanitizedUsers = allUsers.map(({ id, oid, displayName, role, kidSettings, isLocalAccount }) => ({
       id,
       oid,
       displayName,
       role,
-      kidSettings,
+      // FamilyAdmins see full kidSettings for all members.
+      // User-role callers only receive their own kidSettings; peer records get undefined.
+      kidSettings: scope.role === 'FamilyAdmin' || oid === callerOid ? kidSettings : undefined,
       isLocalAccount,
     }));
 

@@ -21,6 +21,8 @@ interface Props {
   memberCount: number
   /** Maximum members allowed (from server) */
   memberLimit: number
+  /** OID of the currently signed-in user — used to prevent self-deletion */
+  currentUserOid: string
 }
 
 type LocalSettings = KidSettings
@@ -403,7 +405,7 @@ function needsBiweeklyStartDialog(edited: LocalSettings, saved: LocalSettings): 
   return saved.allowanceFrequency !== 'Bi-weekly' || edited.dayOfWeek !== saved.dayOfWeek
 }
 
-export default function AdminFamilyMembersTab({ kids, members, pendingInvites, tithingEnabled, onUnsavedStatusChange, onSettingsSaved, onMemberCreated, onRefreshInvites, familyId, memberCount, memberLimit }: Props) {
+export default function AdminFamilyMembersTab({ kids, members, pendingInvites, tithingEnabled, onUnsavedStatusChange, onSettingsSaved, onMemberCreated, onRefreshInvites, familyId, memberCount, memberLimit, currentUserOid }: Props) {
   const [selectedId, setSelectedId]     = useState<string>(() => kids[0]?.oid ?? '')
   const [pendingKidId, setPendingKidId] = useState<string | null>(null)
 
@@ -1001,17 +1003,39 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
         )}
       </div>
 
-      {/* Mobile kid picker — dropdown and Add Member button for small screens */}
+      {/* Mobile member picker — dropdown and Add Member button for small screens */}
       <select
         className="kid-selector-mobile"
-        value={selectedId}
-        onChange={e => handleKidClick(e.target.value)}
+        value={selectedAdminOid ?? selectedInviteCode ?? selectedId}
+        onChange={e => {
+          const val = e.target.value
+          const invite = pendingInvites.find(i => i.code === val)
+          if (invite) { handleSelectInvite(val); return }
+          const member = members.find(m => m.oid === val)
+          if (member?.role === 'FamilyAdmin') handleAdminClick(val)
+          else handleKidClick(val)
+        }}
         aria-label="Select family member"
       >
-        {kids.map(k => (
-          <option key={k.oid} value={k.oid}>{k.displayName}</option>
+        {members.map(m => (
+          <option key={m.oid} value={m.oid}>
+            {m.displayName}{m.role === 'FamilyAdmin' ? ' (Admin)' : ''}
+          </option>
+        ))}
+        {pendingInvites.map(invite => (
+          <option key={invite.code} value={invite.code}>
+            {invite.displayNameHint || 'Invited member'} (Pending)
+          </option>
         ))}
       </select>
+      <div className="kid-add-member-mobile">
+        <InviteSection
+          memberCount={memberCount}
+          memberLimit={memberLimit}
+          onMemberCreated={() => { onMemberCreated?.(); onRefreshInvites?.() }}
+          onInviteCreated={onRefreshInvites}
+        />
+      </div>
 
       {/* Right panel — settings form */}
       <div className="kid-settings-panel">
@@ -1070,7 +1094,8 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
                   <span />
                   <button
                     className="btn btn--danger btn--sm"
-                    disabled={isBusy}
+                    disabled={isBusy || selectedAdmin.oid === currentUserOid}
+                    title={selectedAdmin.oid === currentUserOid ? 'You cannot delete your own account' : undefined}
                     onClick={() => selectedAdmin.isLocalAccount ? setDeleteLocalFor(selectedAdmin) : setDeleteEnrolledFor(selectedAdmin)}
                   >
                     {isBusy ? 'Deleting…' : 'Delete user'}

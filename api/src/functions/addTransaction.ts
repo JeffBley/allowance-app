@@ -51,8 +51,9 @@ async function addTransaction(request: HttpRequest, context: InvocationContext):
   }
   const normalizedDate = new Date(body.date).toISOString();
 
-  // Validate notes length
-  if (body.notes && body.notes.length > 500) {
+  // Validate and sanitize notes: strip control characters (KI-0089), then check length.
+  const sanitizedNotes = (body.notes ?? '').replace(/[\x00-\x1f\x7f]/g, '');
+  if (sanitizedNotes.length > 500) {
     return { status: 400, jsonBody: { code: 'INVALID_NOTES', message: 'notes must be 500 characters or fewer.' } };
   }
 
@@ -73,7 +74,7 @@ async function addTransaction(request: HttpRequest, context: InvocationContext):
       kidOid: body.kidOid,
       category: body.category,
       amount: body.amount,
-      notes: body.notes ?? '',
+      notes: sanitizedNotes,
       date: normalizedDate,
       // tithable is only meaningful for Income; defaults to true when absent
       tithable: body.category === 'Income' ? (body.tithable !== false) : undefined,

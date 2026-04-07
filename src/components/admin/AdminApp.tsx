@@ -142,6 +142,7 @@ export default function AdminApp({ familyData, kidViews, allTransactions, chores
             familyId={familyData.familyId}
             memberCount={familyData.members.length}
             memberLimit={familyData.memberLimit}
+            currentUserOid={familyData.currentUserOid}
           />
         )}
         {activeTab === 'transactions' && (

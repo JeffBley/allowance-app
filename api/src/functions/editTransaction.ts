@@ -35,8 +35,9 @@ async function editTransaction(request: HttpRequest, context: InvocationContext)
     return { status: 400, jsonBody: { code: 'INVALID_AMOUNT', message: 'amount must be a positive number no greater than 100,000.' } };
   }
 
-  // Validate notes length if provided
-  if (body.notes != null && body.notes.length > 500) {
+  // Validate and sanitize notes if provided: strip control characters (KI-0089), then check length.
+  const sanitizedNotes = body.notes != null ? body.notes.replace(/[\x00-\x1f\x7f]/g, '') : undefined;
+  if (sanitizedNotes != null && sanitizedNotes.length > 500) {
     return { status: 400, jsonBody: { code: 'INVALID_NOTES', message: 'notes must be 500 characters or fewer.' } };
   }
 
@@ -78,7 +79,7 @@ async function editTransaction(request: HttpRequest, context: InvocationContext)
       ...existing,
       ...(body.category && { category: body.category }),
       ...(body.amount != null && { amount: body.amount }),
-      ...(body.notes != null && { notes: body.notes }),
+      ...(sanitizedNotes != null && { notes: sanitizedNotes }),
       ...(normalizedDate !== undefined && { date: normalizedDate }),
       // tithable only applies to Income; preserve existing value when not in body
       ...(body.category === 'Income' || (!body.category && existing.category === 'Income')

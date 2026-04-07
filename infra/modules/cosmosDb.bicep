@@ -35,10 +35,9 @@ resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' = {
     consistencyPolicy: {
       defaultConsistencyLevel: 'Session'
     }
-    // disableLocalAuth: false — key-based auth is left enabled as a safe-migration
-    // fallback. Set to true (and re-run azd provision) once managed identity
-    // access is confirmed working in production to eliminate the account key entirely.
-    disableLocalAuth: false
+    // Managed identity access is confirmed working in production. Key-based auth is
+    // disabled to eliminate the Cosmos account key as an attack surface.
+    disableLocalAuth: true
     publicNetworkAccess: 'Enabled'
     enableFreeTier: false
     enableAutomaticFailover: false
