@@ -40,3 +40,5 @@ api/dist/
 
 # Internal security tracker — MUST NOT be committed
 .internal/
+
+# Entra External ID custom branding CSS — lives in /Custom CSS/ at workspace root

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MsalProvider, useMsal, useIsAuthenticated } from '@azure/msal-react';
 import { msalInstance, loginRequest, getSignInEmail } from './msalConfig';
 
@@ -79,6 +79,17 @@ export function LoginGate({ children }: LoginGateProps) {
       setSigningIn(false);
     }
   };
+
+  // Auto-redirect to sign-in when the user is unauthenticated and there is no
+  // boot error. Guarded inside the effect so hooks are always called
+  // unconditionally (Rules of Hooks). Boot errors are excluded to avoid an
+  // infinite redirect loop when the MSAL config itself is broken.
+  useEffect(() => {
+    if (!isAuthenticated && inProgress === 'none' && !getAuthBootError()) {
+      void handleSignIn()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, inProgress])
 
   if (inProgress !== 'none') {
     return (

@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useMsal } from '@azure/msal-react'
 import { useApi } from '../hooks/useApi'
 import { getDisplayName, getSignInEmail, parseAccessTokenClaims, apiTokenRequest } from '../auth/msalConfig'
@@ -47,8 +47,14 @@ export default function ActivationScreen({ onEnrolled }: Props) {
     return raw.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8)
   })()
 
+  // True when the user followed an invite link — the code came pre-populated
+  // from the URL, so we can submit automatically without making them click.
+  const urlCodeIsValid = /^[a-z0-9]{8}$/.test(urlInviteCode)
+
   const [code, setCode]               = useState(urlInviteCode)
-  const [submitting, setSubmitting]   = useState(false)
+  // Pre-set to true so the button shows "Activating…" immediately on mount
+  // when we know we'll auto-submit.
+  const [submitting, setSubmitting]   = useState(urlCodeIsValid)
   const [error, setError]             = useState<string | null>(null)
   const [namingFamily, setNamingFamily] = useState(false)
   const [familyName, setFamilyName]   = useState('')
@@ -60,19 +66,9 @@ export default function ActivationScreen({ onEnrolled }: Props) {
     instance.logoutRedirect({ account }).catch(console.error)
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
+  // Core redemption logic — shared by handleSubmit and the auto-submit effect.
+  async function submitCode(trimmedCode: string) {
     setError(null)
-
-    const trimmedCode = code.trim().toLowerCase()
-
-    // Client-side validation before sending
-    if (!/^[a-z0-9]{8}$/.test(trimmedCode)) {
-      setError('Invite codes are 8 characters (letters and numbers). Check your code and try again.')
-      codeRef.current?.focus()
-      return
-    }
-
     setSubmitting(true)
     try {
       // The "First Name" / "Last Name" custom attributes are now emitted
@@ -121,6 +117,22 @@ export default function ActivationScreen({ onEnrolled }: Props) {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  // Auto-submit on mount when the user arrived via an invite link.
+  // The code came directly from the URL — no need to make them click.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (urlCodeIsValid) void submitCode(urlInviteCode) }, [])
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    const trimmedCode = code.trim().toLowerCase()
+    if (!/^[a-z0-9]{8}$/.test(trimmedCode)) {
+      setError('Invite codes are 8 characters (letters and numbers). Check your code and try again.')
+      codeRef.current?.focus()
+      return
+    }
+    await submitCode(trimmedCode)
   }
 
   async function handleNameFamily(e: React.FormEvent) {

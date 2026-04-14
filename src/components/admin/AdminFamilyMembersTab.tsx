@@ -417,7 +417,8 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
   }, [kids])
 
   const [edited, setEdited] = useState<LocalSettings>(() => ({
-    ...(kids[0]?.kidSettings ?? DEFAULT_SETTINGS),
+    ...DEFAULT_SETTINGS,
+    ...(kids[0]?.kidSettings ?? {}),
   }))
 
   // Bi-weekly start dialog state
@@ -764,7 +765,7 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
     setSelectedInviteCode(null)   // deselect any pending invite
     setSelectedAdminOid(null)     // deselect any admin
     const k = kids.find(k => k.oid === id)
-    setEdited({ ...(savedPerKid[id] ?? k?.kidSettings ?? DEFAULT_SETTINGS) })
+    setEdited({ ...DEFAULT_SETTINGS, ...(savedPerKid[id] ?? k?.kidSettings ?? {}) })
     setPendingKidId(null)
   }
 
@@ -796,7 +797,7 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
       // nextAllowanceDate (or preserved the scheduler's date) which the client doesn't know.
       const savedSettings = result.user.kidSettings
       setSavedPerKid(prev => ({ ...prev, [selectedId]: savedSettings }))
-      setEdited({ ...savedSettings })
+      setEdited({ ...DEFAULT_SETTINGS, ...savedSettings })
       setShowBiweeklyDialog(false)
       onSettingsSaved()
     } catch {
@@ -1320,7 +1321,7 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
                     min="0"
                     step="0.25"
                     value={edited.hourlyWageRate ?? 10}
-                    onChange={e => updateField('hourlyWageRate', parseFloat(e.target.value) || 0)}
+                    onChange={e => updateField('hourlyWageRate', parseFloat(e.target.value) || DEFAULT_SETTINGS.hourlyWageRate)}
                   />
                 </div>
                 <p className="form-hint" style={{ marginTop: 4 }}>per hour</p>

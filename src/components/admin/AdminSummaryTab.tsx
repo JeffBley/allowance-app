@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { KidView, Chore } from '../../data/mockData'
 import AddTransactionWizard from '../user/AddTransactionWizard'
 import AdminChoresSection from './AdminChoresSection'
+import KidDetailView from './KidDetailView'
 
 interface Props {
   kids: KidView[]
@@ -35,6 +36,17 @@ function formatMoney(amount: number): string {
 export default function AdminSummaryTab({ kids, choreBasedIncomeEnabled, chores, tithingEnabled, onDataChange }: Props) {
   const [wizardKid, setWizardKid] = useState<KidView | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [selectedKid, setSelectedKid] = useState<KidView | null>(null)
+
+  if (selectedKid) {
+    return (
+      <KidDetailView
+        kid={selectedKid}
+        tithingEnabled={tithingEnabled}
+        onBack={() => setSelectedKid(null)}
+      />
+    )
+  }
 
   async function handleRefresh() {
     setRefreshing(true)
@@ -66,7 +78,13 @@ export default function AdminSummaryTab({ kids, choreBasedIncomeEnabled, chores,
             </div>
             <div className="admin-kid-tile__info">
               <div className="admin-kid-tile__name-row">
-                <h3 className="admin-kid-tile__name">{kid.displayName}</h3>
+                <button
+                  className="admin-kid-tile__name admin-kid-tile__name--link"
+                  onClick={() => setSelectedKid(kid)}
+                  title={`View ${kid.displayName}'s account`}
+                >
+                  {kid.displayName}
+                </button>
                 <button
                   className="btn btn--secondary btn--sm"
                   onClick={() => setWizardKid(kid)}
