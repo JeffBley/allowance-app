@@ -52,9 +52,23 @@ async function updateMemberOrder(request: HttpRequest, context: InvocationContex
     if (!familyDoc) {
       return { status: 404, jsonBody: { code: 'NOT_FOUND', message: 'Family document not found.' } };
     }
+    // ETag-conditioned replace prevents concurrent family-doc writes (e.g. PATCH /family/settings)
+    // from being silently overwritten by this member-order save.
+    const familyEtag = (familyDoc as Family & { _etag?: string })._etag;
 
     const updated: Family = { ...familyDoc, memberOrder: order };
-    await familiesContainer.item(scope.familyId, scope.familyId).replace<Family>(updated);
+    try {
+      await familiesContainer.item(scope.familyId, scope.familyId).replace<Family>(
+        updated,
+        familyEtag ? { accessCondition: { type: 'IfMatch', condition: familyEtag } } : {},
+      );
+    } catch (replaceErr) {
+      const obj = replaceErr as Record<string, unknown>;
+      if (obj['code'] === 412 || obj['statusCode'] === 412) {
+        return { status: 409, jsonBody: { code: 'CONFLICT', message: 'Family settings were modified concurrently. Please reload and try again.' } };
+      }
+      throw replaceErr;
+    }
 
     context.log(`updateMemberOrder: saved order for family '${scope.familyId}' (${order.length} entries)`);
     return { status: 200, jsonBody: { ok: true } };

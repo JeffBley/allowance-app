@@ -35,7 +35,9 @@ async function updateFamilySettings(request: HttpRequest, context: InvocationCon
     return { status: 400, jsonBody: { code: 'INVALID_FIELD', message: 'Request must include choreBasedIncomeEnabled, tithingEnabled, or familyName.' } };
   }
   if (hasFamilyName) {
-    const name = (body.familyName as string).trim();
+    // Strip control characters before validating length so an all-control-char payload
+    // doesn't pass the length check then collapse to '' on storage.
+    const name = (body.familyName as string).trim().replace(/[\x00-\x1f\x7f]/g, '');
     if (name.length < 1 || name.length > 60) {
       return { status: 400, jsonBody: { code: 'INVALID_FIELD', message: 'familyName must be 1–60 characters.' } };
     }
@@ -54,6 +56,7 @@ async function updateFamilySettings(request: HttpRequest, context: InvocationCon
     if (hasChore)      updated.choreBasedIncomeEnabled = body.choreBasedIncomeEnabled;
     if (hasTithing)    updated.tithingEnabled = body.tithingEnabled;
     if (hasFamilyName) {
+      // Already validated above after stripping control characters
       updated.name              = (body.familyName as string).trim().replace(/[\x00-\x1f\x7f]/g, '');
       updated.nameIsPlaceholder = false;
     }

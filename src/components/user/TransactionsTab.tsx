@@ -1,5 +1,6 @@
-import { useState, useMemo } from 'react'
-import type { Transaction } from '../../data/mockData'
+import { useState, useMemo, useEffect, useRef } from 'react'
+import type { Transaction, TransactionCategory } from '../../data/mockData'
+import { useApi } from '../../hooks/useApi'
 
 interface Props {
   transactions: Transaction[]
@@ -47,14 +48,123 @@ function formatDate(iso: string): string {
 }
 
 function formatMoney(amount: number): string {
-  return `$${amount.toFixed(2)}`
+  return amount < 0 ? `-$${(-amount).toFixed(2)}` : `$${amount.toFixed(2)}`
 }
 
 export default function TransactionsTab({ transactions, allowDelete, allowEdit, onDataChange }: Props) {
+  const { apiFetch } = useApi()
   const [dateRange, setDateRange] = useState<DateRange>('3m')
   const [search, setSearch]       = useState('')
   const [sortBy, setSortBy]       = useState<SortOption>('date-desc')
   const [refreshing, setRefreshing] = useState(false)
+
+  // ── Edit transaction state ─────────────────────────────────────────────────
+  const [editingTxn, setEditingTxn]         = useState<Transaction | null>(null)
+  const [editCategory, setEditCategory]     = useState<TransactionCategory>('Income')
+  const [editDate, setEditDate]             = useState('')
+  const [editAmount, setEditAmount]         = useState('')
+  const [editNotes, setEditNotes]           = useState('')
+  const [editTithable, setEditTithable]     = useState(true)
+  const [editSubmitting, setEditSubmitting] = useState(false)
+  const [editError, setEditError]           = useState<string | null>(null)
+
+  function openEditForm(t: Transaction) {
+    setEditingTxn(t)
+    setEditCategory(t.category)
+    setEditDate(t.date.split('T')[0])
+    setEditAmount(String(t.amount))
+    setEditNotes(t.notes)
+    setEditTithable(t.tithable !== false)
+    setEditError(null)
+  }
+
+  async function handleEditTransaction(e: React.FormEvent) {
+    e.preventDefault()
+    if (!editingTxn) return
+    setEditError(null)
+    const amount = parseFloat(editAmount)
+    if (isNaN(amount) || amount <= 0) { setEditError('Amount must be a positive number.'); return }
+    setEditSubmitting(true)
+    try {
+      await apiFetch(`transactions/${encodeURIComponent(editingTxn.id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          category: editCategory,
+          amount,
+          date: editDate,
+          notes: editNotes.trim(),
+          ...(editCategory === 'Income' && { tithable: editTithable }),
+        }),
+      })
+      if (onDataChange) await onDataChange()
+      setEditingTxn(null)
+    } catch (err) {
+      const apiErr = err as { body?: { message?: string } }
+      setEditError(apiErr?.body?.message ?? 'Failed to update transaction.')
+    } finally {
+      setEditSubmitting(false)
+    }
+  }
+
+  // ── Delete transaction state ───────────────────────────────────────────────
+  const [confirmDeleteTxn, setConfirmDeleteTxn] = useState<Transaction | null>(null)
+  const [deleting, setDeleting]                 = useState(false)
+  const [deleteError, setDeleteError]           = useState<string | null>(null)
+
+  async function handleDeleteTransaction() {
+    if (!confirmDeleteTxn) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await apiFetch(`transactions/${encodeURIComponent(confirmDeleteTxn.id)}`, { method: 'DELETE' })
+      if (onDataChange) await onDataChange()
+      setConfirmDeleteTxn(null)
+    } catch (err) {
+      const apiErr = err as { body?: { message?: string } }
+      setDeleteError(apiErr?.body?.message ?? 'Failed to delete transaction.')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  // ── Row ellipsis menu ─────────────────────────────────────────────────────
+  const TXN_MENU_HEIGHT = 92
+  const [openMenuFor, setOpenMenuFor] = useState<string | null>(null)
+  const [menuTxn, setMenuTxn]         = useState<Transaction | null>(null)
+  const [menuPos, setMenuPos]         = useState<{ top: number; right: number } | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!openMenuFor) return
+    function handleClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        closeMenu()
+      }
+    }
+    function handleScroll() { closeMenu() }
+    document.addEventListener('mousedown', handleClick)
+    window.addEventListener('scroll', handleScroll, { capture: true, passive: true })
+    return () => {
+      document.removeEventListener('mousedown', handleClick)
+      window.removeEventListener('scroll', handleScroll, { capture: true })
+    }
+  }, [openMenuFor])
+
+  function openMenu(t: Transaction, btn: HTMLButtonElement) {
+    if (openMenuFor === t.id) { closeMenu(); return }
+    const r = btn.getBoundingClientRect()
+    const spaceBelow = window.innerHeight - r.bottom - 4
+    const top = spaceBelow >= TXN_MENU_HEIGHT ? r.bottom + 4 : r.top - TXN_MENU_HEIGHT - 4
+    setMenuPos({ top, right: window.innerWidth - r.right })
+    setOpenMenuFor(t.id)
+    setMenuTxn(t)
+  }
+
+  function closeMenu() {
+    setOpenMenuFor(null)
+    setMenuTxn(null)
+    setMenuPos(null)
+  }
 
   async function handleRefresh() {
     if (!onDataChange) return
@@ -73,8 +183,14 @@ export default function TransactionsTab({ transactions, allowDelete, allowEdit, 
       })
       .sort((a, b) => {
         switch (sortBy) {
-          case 'date-desc':   return b.date.localeCompare(a.date)
-          case 'date-asc':    return a.date.localeCompare(b.date)
+          case 'date-desc': {
+            const p = b.date.localeCompare(a.date)
+            return p !== 0 ? p : (b.createdAt ?? b.date).localeCompare(a.createdAt ?? a.date)
+          }
+          case 'date-asc': {
+            const p = a.date.localeCompare(b.date)
+            return p !== 0 ? p : (a.createdAt ?? a.date).localeCompare(b.createdAt ?? b.date)
+          }
           case 'amount-asc':  return a.amount - b.amount
           case 'amount-desc': return b.amount - a.amount
           default:            return 0
@@ -149,6 +265,7 @@ export default function TransactionsTab({ transactions, allowDelete, allowEdit, 
                 <th>Date</th>
                 <th>Category</th>
                 <th>Amount</th>
+                <th>Balance</th>
                 <th>Notes</th>
                 {showActions && <th>Actions</th>}
               </tr>
@@ -165,11 +282,20 @@ export default function TransactionsTab({ transactions, allowDelete, allowEdit, 
                   <td className={`td-amount td-amount--${t.category === 'Income' ? 'income' : 'withdrawal'}`}>
                     {t.category !== 'Income' ? '−' : '+'}{formatMoney(t.amount)}
                   </td>
+                  <td className="td-balance">
+                    {t.balanceAfter !== undefined ? formatMoney(t.balanceAfter) : '—'}
+                  </td>
                   <td className="td-notes">{t.notes || '—'}</td>
                   {showActions && (
                     <td className="td-actions">
-                      {allowEdit   && <button className="btn-action btn-action--edit">Edit</button>}
-                      {allowDelete && <button className="btn-action btn-action--delete">Delete</button>}
+                      <button
+                        className="txn-menu-btn"
+                        aria-label="Transaction options"
+                        aria-expanded={openMenuFor === t.id}
+                        onClick={e => openMenu(t, e.currentTarget)}
+                      >
+                        ⋮
+                      </button>
                     </td>
                   )}
                 </tr>
@@ -182,6 +308,113 @@ export default function TransactionsTab({ transactions, allowDelete, allowEdit, 
       <p className="results-count">
         Showing {filtered.length} transaction{filtered.length !== 1 ? 's' : ''}
       </p>
+
+      {/* ── Row ellipsis menu (floats above overflow:hidden) ─────────────── */}
+      {openMenuFor && menuPos && menuTxn && (
+        <div ref={menuRef}>
+          <div className="chore-menu" role="menu" style={{ position: 'fixed', top: menuPos.top, right: menuPos.right, left: 'auto' }}>
+            {allowEdit && (
+              <button
+                className="chore-menu__item"
+                role="menuitem"
+                onClick={() => { closeMenu(); openEditForm(menuTxn) }}
+              >
+                Edit
+              </button>
+            )}
+            {allowDelete && (
+              <button
+                className="chore-menu__item chore-menu__item--delete"
+                role="menuitem"
+                onClick={() => { closeMenu(); setConfirmDeleteTxn(menuTxn); setDeleteError(null) }}
+              >
+                Delete
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit Transaction dialog ─────────────────────────────────────── */}
+      {editingTxn && (
+        <div className="sa-dialog-overlay" role="dialog" aria-modal="true" aria-labelledby="edit-txn-title">
+          <div className="sa-dialog">
+            <p className="sa-dialog__title" id="edit-txn-title">Edit Transaction</p>
+            <form onSubmit={handleEditTransaction}>
+              <div className="sa-dialog__body">
+                <div className="sa-form-row">
+                  <div className="sa-form-group sa-form-group--grow">
+                    <label className="form-label" htmlFor="edit-txn-cat">Category</label>
+                    <select id="edit-txn-cat" className="form-select" value={editCategory}
+                      onChange={e => setEditCategory(e.target.value as TransactionCategory)}>
+                      <option value="Income">Income</option>
+                      <option value="Purchase">Purchase</option>
+                      <option value="Tithing">Tithing</option>
+                    </select>
+                  </div>
+                  <div className="sa-form-group">
+                    <label className="form-label" htmlFor="edit-txn-date">Date</label>
+                    <input id="edit-txn-date" className="form-input" type="date"
+                      value={editDate} onChange={e => setEditDate(e.target.value)} required />
+                  </div>
+                </div>
+                <div className="sa-form-group">
+                  <label className="form-label" htmlFor="edit-txn-amount">Amount ($)</label>
+                  <input id="edit-txn-amount" className="form-input" type="number"
+                    min="0.01" step="any" placeholder="0.00"
+                    value={editAmount} onChange={e => setEditAmount(e.target.value)} required />
+                </div>
+                <div className="sa-form-group">
+                  <label className="form-label" htmlFor="edit-txn-notes">Notes (optional)</label>
+                  <input id="edit-txn-notes" className="form-input" type="text" maxLength={500}
+                    value={editNotes} onChange={e => setEditNotes(e.target.value)} />
+                </div>
+                {editCategory === 'Income' && (
+                  <div className="sa-form-group">
+                    <label className="form-label form-label--checkbox">
+                      <input type="checkbox" checked={editTithable}
+                        onChange={e => setEditTithable(e.target.checked)} />
+                      {' '}Tithable income (adds 10% to Tithing Owed)
+                    </label>
+                  </div>
+                )}
+                {editError && <p className="sa-form-error" role="alert">{editError}</p>}
+              </div>
+              <div className="sa-dialog__actions">
+                <button type="button" className="btn btn--secondary"
+                  onClick={() => setEditingTxn(null)} disabled={editSubmitting}>Cancel</button>
+                <button type="submit" className="btn btn--primary" disabled={editSubmitting}>
+                  {editSubmitting ? 'Saving…' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete confirmation dialog ─────────────────────────────────── */}
+      {confirmDeleteTxn && (
+        <div className="sa-dialog-overlay" role="alertdialog" aria-modal="true">
+          <div className="sa-dialog">
+            <p className="sa-dialog__title">Delete Transaction?</p>
+            <div className="sa-dialog__body">
+              <p>
+                Delete this {confirmDeleteTxn.category} of <strong>${confirmDeleteTxn.amount.toFixed(2)}</strong>
+                {confirmDeleteTxn.notes ? ` (${confirmDeleteTxn.notes})` : ''}? This cannot be undone.
+              </p>
+              {deleteError && <p className="sa-form-error" role="alert" style={{ marginTop: 8 }}>{deleteError}</p>}
+            </div>
+            <div className="sa-dialog__actions">
+              <button className="btn btn--secondary" onClick={() => setConfirmDeleteTxn(null)} disabled={deleting}>
+                Cancel
+              </button>
+              <button className="btn btn--danger" onClick={handleDeleteTransaction} disabled={deleting}>
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

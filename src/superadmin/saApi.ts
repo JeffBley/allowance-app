@@ -76,6 +76,11 @@ async function saFetch<T>(
     throw new SaApiError(response.status, code, message)
   }
 
+  // 204 No Content (and any other response with no body) — return undefined
+  if (response.status === 204 || response.headers.get('content-length') === '0') {
+    return undefined as unknown as T
+  }
+
   return response.json() as Promise<T>
 }
 

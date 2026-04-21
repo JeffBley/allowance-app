@@ -65,15 +65,6 @@ async function editTransaction(request: HttpRequest, context: InvocationContext)
       return { status: 404, jsonBody: { code: 'NOT_FOUND', message: 'Transaction not found.' } };
     }
 
-    // Snapshot before
-    const before: Partial<Transaction> = {
-      category: existing.category,
-      amount: existing.amount,
-      notes: existing.notes,
-      date: existing.date,
-      kidOid: existing.kidOid,
-    };
-
     // Apply updates (only fields present in the request body)
     const updated: Transaction = {
       ...existing,
@@ -85,14 +76,6 @@ async function editTransaction(request: HttpRequest, context: InvocationContext)
       ...(body.category === 'Income' || (!body.category && existing.category === 'Income')
         ? { tithable: body.tithable !== undefined ? body.tithable : existing.tithable }
         : { tithable: undefined }),
-    };
-
-    // Snapshot after
-    const after: Partial<Transaction> = {
-      category: updated.category,
-      amount: updated.amount,
-      notes: updated.notes,
-      date: updated.date,
     };
 
     // Persist the updated transaction

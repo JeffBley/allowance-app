@@ -16,6 +16,7 @@ interface WizardState {
   hours: string
   shouldBeTithed: boolean | null
   notes: string
+  donationAmount: string
 }
 
 // Step layout per category (tithingEnabled = true):
@@ -58,7 +59,7 @@ function getScreenName(step: number, category: Category | null, tithingEnabled: 
   return 'summary'
 }
 
-function fmt(n: number) { return `$${n.toFixed(2)}` }
+function fmt(n: number) { return n < 0 ? `-$${(-n).toFixed(2)}` : `$${n.toFixed(2)}` }
 
 const CATEGORY_META: Record<Category, { icon: string; label: string; description: string }> = {
   income:   { icon: '💰', label: 'Income',   description: 'Money you earned or received' },
@@ -75,6 +76,7 @@ export default function AddTransactionWizard({ kid, tithingEnabled = true, onClo
     hours: '',
     shouldBeTithed: null,
     notes: '',
+    donationAmount: '',
   })
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -88,11 +90,12 @@ export default function AddTransactionWizard({ kid, tithingEnabled = true, onClo
   const amountNum   = (hourlyOn && state.category === 'income' && hoursNum > 0)
     ? Math.round(hoursNum * wageRate * 100) / 100
     : parseFloat(state.amount) || 0
+  const donationAmountNum = parseFloat(state.donationAmount) || 0
   const titheAmt   = amountNum * 0.1
 
   const newTithingOwed =
     state.category === 'tithing'
-      ? Math.max(0, kid.tithingOwed - amountNum)
+      ? kid.tithingOwed - amountNum
       : state.category === 'income' && tithingEnabled && state.shouldBeTithed
         ? kid.tithingOwed + titheAmt
         : kid.tithingOwed
@@ -100,7 +103,9 @@ export default function AddTransactionWizard({ kid, tithingEnabled = true, onClo
   const newBalance =
     state.category === 'income'
       ? kid.balance + amountNum
-      : kid.balance - amountNum
+      : state.category === 'tithing'
+        ? kid.balance - amountNum - donationAmountNum
+        : kid.balance - amountNum
 
   function canProceed(): boolean {
     if (step === 0) return state.category !== null
@@ -129,6 +134,19 @@ export default function AddTransactionWizard({ kid, tithingEnabled = true, onClo
           ...(state.category === 'income' && { tithable: tithingEnabled && state.shouldBeTithed !== false }),
         }),
       })
+      // If additional donation was entered on the tithing step, post it as a separate purchase
+      if (state.category === 'tithing' && donationAmountNum > 0) {
+        await apiFetch('transactions', {
+          method: 'POST',
+          body: JSON.stringify({
+            kidOid:   kid.oid,
+            category: 'Purchase',
+            amount:   donationAmountNum,
+            date:     new Date().toISOString().split('T')[0],
+            notes:    'Additional donations (fast offerings, etc.)',
+          }),
+        })
+      }
       onClose()
     } catch (err) {
       const apiErr = err as { body?: { message?: string } }
@@ -260,10 +278,24 @@ export default function AddTransactionWizard({ kid, tithingEnabled = true, onClo
                       autoFocus
                     />
                   </div>
-                  {state.category === 'tithing' && amountNum > kid.tithingOwed && amountNum > 0 && (
-                    <p className="wizard-screen__warning">
-                      ⚠ Amount exceeds tithing owed ({fmt(kid.tithingOwed)})
-                    </p>
+                  {state.category === 'tithing' && (
+                    <>
+                      <p className="wizard-wages-label">
+                        Additional donations <span className="optional">(fast offerings, etc.)</span>
+                      </p>
+                      <div className="amount-input-wrapper">
+                        <span className="amount-input-prefix">$</span>
+                        <input
+                          className="amount-input"
+                          type="number"
+                          min="0.01"
+                          step="0.01"
+                          placeholder="0.00"
+                          value={state.donationAmount}
+                          onChange={e => setState(s => ({ ...s, donationAmount: e.target.value }))}
+                        />
+                      </div>
+                    </>
                   )}
                 </>
               )}
@@ -340,9 +372,15 @@ export default function AddTransactionWizard({ kid, tithingEnabled = true, onClo
                     {fmt(newTithingOwed)}
                   </span>
                 </div>
-                <div className="summary-row">
+                {donationAmountNum > 0 && (
+                  <div className="summary-row">
+                    <span className="summary-row__label">Additional Donation</span>
+                    <span className="summary-row__value summary-row__value--withdrawal">−{fmt(donationAmountNum)}</span>
+                  </div>
+                )}
+                <div className="summary-row summary-row--total">
                   <span className="summary-row__label">Money Available (after)</span>
-                  <span className="summary-row__value">{fmt(kid.balance - amountNum)}</span>
+                  <span className="summary-row__value">{fmt(newBalance)}</span>
                 </div>
               </div>
             </div>

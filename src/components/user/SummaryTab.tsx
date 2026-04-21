@@ -14,7 +14,7 @@ function formatDate(iso: string): string {
 }
 
 function formatMoney(amount: number): string {
-  return `$${amount.toFixed(2)}`
+  return amount < 0 ? `-$${(-amount).toFixed(2)}` : `$${amount.toFixed(2)}`
 }
 
 export default function SummaryTab({ kid, tithingEnabled }: Props) {

@@ -205,9 +205,6 @@ async function unlinkMember(familyId: string, memberOid: string, request: HttpRe
     if (user.isLocalAccount) {
       return { status: 409, jsonBody: { code: 'ALREADY_LOCAL', message: 'This member is already a local account.' } };
     }
-    if (user.role !== 'User') {
-      return { status: 409, jsonBody: { code: 'INVALID_ROLE', message: 'Only User-role members can have their linked account removed.' } };
-    }
 
     const newLocalOid = crypto.randomUUID();
     const now = new Date().toISOString();
@@ -221,6 +218,9 @@ async function unlinkMember(familyId: string, memberOid: string, request: HttpRe
     };
     await usersContainer.items.create(newUser);
 
+    // Serially migrate transactions with per-item error capture so a partial failure
+    // doesn't leave the family with two active user rows pointing at split transaction
+    // sets (mirrors inviteRedeem.ts link flow and unlinkMember.ts).
     const txnContainer = getContainer('transactions');
     const { resources: txns } = await txnContainer.items
       .query<Transaction>({
@@ -232,9 +232,44 @@ async function unlinkMember(familyId: string, memberOid: string, request: HttpRe
       })
       .fetchAll();
 
-    await Promise.all(txns.map(t => txnContainer.item(t.id, familyId).replace({ ...t, kidOid: newLocalOid })));
-    await usersContainer.item(memberOid, familyId).delete();
-    context.log(`superadmin: unlinked member '${memberOid}' → local '${newLocalOid}' in family '${familyId}', migrated ${txns.length} transaction(s)`);
+    const failedTxnIds: string[] = [];
+    let migratedCount = 0;
+    for (const t of txns) {
+      try {
+        await txnContainer.item(t.id, familyId).replace({ ...t, kidOid: newLocalOid });
+        migratedCount++;
+      } catch (migrateErr) {
+        context.warn(`superadmin unlinkMember: failed to migrate transaction '${t.id}'`, migrateErr);
+        failedTxnIds.push(t.id);
+      }
+    }
+
+    if (failedTxnIds.length > 0) {
+      context.error(
+        `superadmin unlinkMember: PARTIAL MIGRATION — ${migratedCount}/${txns.length} transactions migrated ` +
+        `for '${memberOid}' → '${newLocalOid}'. Failed IDs: [${failedTxnIds.join(', ')}]. Old user retained as recovery anchor.`,
+      );
+      return {
+        status: 500,
+        jsonBody: {
+          code: 'PARTIAL_MIGRATION',
+          message: 'Unlink partially completed. Retry to resume the migration.',
+        },
+      };
+    }
+
+    // Only delete the old user after all transactions migrated. 404 = already deleted by a retry.
+    try {
+      await usersContainer.item(memberOid, familyId).delete();
+    } catch (deleteErr) {
+      const errObj = deleteErr as Record<string, unknown>;
+      if (errObj['code'] === 404 || errObj['statusCode'] === 404) {
+        context.log(`superadmin unlinkMember: old user '${memberOid}' already deleted — continuing`);
+      } else {
+        throw deleteErr;
+      }
+    }
+    context.log(`superadmin: unlinked member '${memberOid}' → local '${newLocalOid}' in family '${familyId}', migrated ${migratedCount} transaction(s)`);
 
     return {
       status: 200,

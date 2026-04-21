@@ -225,8 +225,14 @@ export default function AdminTransactionsTab({ kids, allTransactions, onDataChan
       })
       .sort((a, b) => {
         switch (sortBy) {
-          case 'date-desc':   return b.date.localeCompare(a.date)
-          case 'date-asc':    return a.date.localeCompare(b.date)
+          case 'date-desc': {
+            const p = b.date.localeCompare(a.date)
+            return p !== 0 ? p : (b.createdAt ?? b.date).localeCompare(a.createdAt ?? a.date)
+          }
+          case 'date-asc': {
+            const p = a.date.localeCompare(b.date)
+            return p !== 0 ? p : (a.createdAt ?? a.date).localeCompare(b.createdAt ?? b.date)
+          }
           case 'amount-asc':  return a.amount - b.amount
           case 'amount-desc': return b.amount - a.amount
           default:            return 0

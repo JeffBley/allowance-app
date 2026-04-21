@@ -88,7 +88,7 @@ export default function FamilyDetail({ familyId, onBack, autoInviteMode }: Props
   // Ellipsis context menu
   const [openMenuFor, setOpenMenuFor] = useState<string | null>(null)
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
-  const SA_MEMBER_MENU_HEIGHT = 160 // approximate max height of SA member menu items
+  const SA_MEMBER_MENU_HEIGHT = 200 // approximate max height of SA member menu items
 
   function openMenu(oid: string, btn: HTMLButtonElement) {
     if (openMenuFor === oid) { setOpenMenuFor(null); setMenuPos(null); return }
@@ -118,6 +118,15 @@ export default function FamilyDetail({ familyId, onBack, autoInviteMode }: Props
   const [linkError, setLinkError]                 = useState<string | null>(null)
   const [linkEmail, setLinkEmail]                 = useState('')
   const [linkSendingEmail, setLinkSendingEmail]   = useState(false)
+
+  // Relink account (for already-linked users — unlinks current Entra identity then generates a new link code)
+  const [relinkAccountFor, setRelinkAccountFor]       = useState<SaMember | null>(null)
+  const [relinkStep, setRelinkStep]                   = useState<'confirm' | 'code'>('confirm')
+  const [relinkCode, setRelinkCode]                   = useState<SaInviteCode | null>(null)
+  const [relinkProcessing, setRelinkProcessing]       = useState(false)
+  const [relinkError, setRelinkError]                 = useState<string | null>(null)
+  const [relinkEmail, setRelinkEmail]                 = useState('')
+  const [relinkSendingEmail, setRelinkSendingEmail]   = useState(false)
 
   async function handleOpenLinkAccount(m: SaMember) {
     setLinkAccountFor(m)
@@ -152,6 +161,48 @@ export default function FamilyDetail({ familyId, onBack, autoInviteMode }: Props
       setLinkError(err instanceof SaApiError ? err.message : 'Failed to send email.')
     } finally {
       setLinkSendingEmail(false)
+    }
+  }
+
+  async function handleConfirmRelink() {
+    if (!relinkAccountFor) return
+    setRelinkProcessing(true)
+    setRelinkError(null)
+    try {
+      // Unlink the existing Entra identity — member becomes a local account with a new UUID.
+      // The old OID is deleted server-side and a new one is created, so we must replace
+      // (not update) the entry in the members list using the old OID as the lookup key.
+      const oldOid = relinkAccountFor.oid
+      const unlinked = await unlinkMember(familyId, oldOid)
+      setMembers(prev => prev.map(x => x.oid === oldOid ? unlinked : x))
+      // Generate a new link invite tied to the NEW local oid (unlinked.oid), not the old Entra oid
+      const code = await generateInvite(familyId, {
+        role: relinkAccountFor.role as 'User' | 'FamilyAdmin',
+        displayNameHint: relinkAccountFor.displayName,
+        localMemberOid: unlinked.oid,
+      })
+      setRelinkCode(code)
+      setRelinkStep('code')
+    } catch (err) {
+      setRelinkError(err instanceof SaApiError ? err.message : 'Failed to relink account.')
+    } finally {
+      setRelinkProcessing(false)
+    }
+  }
+
+  async function handleRelinkSendEmail(e: React.FormEvent) {
+    e.preventDefault()
+    if (!relinkCode || !relinkEmail.trim()) return
+    setRelinkSendingEmail(true)
+    setRelinkError(null)
+    try {
+      await sendInviteEmail(familyId, relinkCode.code, relinkEmail.trim())
+      setRelinkAccountFor(null)
+      setRelinkCode(null)
+    } catch (err) {
+      setRelinkError(err instanceof SaApiError ? err.message : 'Failed to send email.')
+    } finally {
+      setRelinkSendingEmail(false)
     }
   }
 
@@ -599,8 +650,11 @@ export default function FamilyDetail({ familyId, onBack, autoInviteMode }: Props
                                 }}
                               >
                                 <button className="member-menu__item" onClick={() => { closeMenu(); openEditMember(m) }}>Edit</button>
-                                {m.isLocalAccount && m.role === 'User' && (
+                                {m.isLocalAccount && (
                                   <button className="member-menu__item" onClick={() => { closeMenu(); handleOpenLinkAccount(m) }}>Link account</button>
+                                )}
+                                {!m.isLocalAccount && (
+                                  <button className="member-menu__item" onClick={() => { closeMenu(); setRelinkAccountFor(m); setRelinkStep('confirm'); setRelinkCode(null); setRelinkError(null); setRelinkEmail('') }}>Relink account</button>
                                 )}
                                 {!m.isLocalAccount && m.role === 'User' && (
                                   <button className="member-menu__item member-menu__item--danger" onClick={() => { closeMenu(); setConfirmUnlinkMember(m) }}>Remove linked account</button>
@@ -1082,6 +1136,76 @@ export default function FamilyDetail({ familyId, onBack, autoInviteMode }: Props
                   </button>
                 </div>
               </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Relink account dialog */}
+      {relinkAccountFor && (
+        <div className="sa-dialog-overlay" role="dialog" aria-modal="true" aria-labelledby="sa-relink-account-title">
+          <div className="sa-dialog sa-dialog--wide">
+            <p className="sa-dialog__title" id="sa-relink-account-title">Relink Account — {relinkAccountFor.displayName}</p>
+
+            {relinkStep === 'confirm' && (
+              <>
+                <div className="sa-dialog__body">
+                  <p>
+                    This will unlink <strong>{relinkAccountFor.displayName}</strong>'s current Microsoft account and generate a new invite code so they can link to a different Entra External ID account. Their transactions and settings will be preserved.
+                  </p>
+                  {relinkError && <p className="sa-form-error" role="alert" style={{ marginTop: 8 }}>{relinkError}</p>}
+                </div>
+                <div className="sa-dialog__actions">
+                  <button className="btn btn--secondary" onClick={() => setRelinkAccountFor(null)} disabled={relinkProcessing}>Cancel</button>
+                  <button className="btn btn--primary" onClick={handleConfirmRelink} disabled={relinkProcessing}>
+                    {relinkProcessing ? 'Processing…' : 'Continue'}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {relinkStep === 'code' && relinkCode && (
+              <div className="sa-dialog__body">
+                <p className="form-hint" style={{ marginBottom: 12 }}>
+                  Share this code with <strong>{relinkAccountFor.displayName}</strong>. When they sign in and enter it, their new Microsoft account will be linked to this account — their existing transactions and settings will carry over.
+                </p>
+                <div className="sa-invite-code-display" style={{ marginBottom: 16 }}>
+                  <code className="sa-invite-code-value">{relinkCode.code}</code>
+                  <button
+                    className="btn btn--secondary btn--sm"
+                    type="button"
+                    onClick={() => navigator.clipboard.writeText(relinkCode.code)}
+                  >
+                    Copy
+                  </button>
+                </div>
+                <p className="form-hint" style={{ marginBottom: 16 }}>
+                  Expires {new Date(relinkCode.expiresAt).toLocaleDateString()} · Single use
+                </p>
+                <form onSubmit={handleRelinkSendEmail}>
+                  <div className="sa-form-group">
+                    <label className="form-label" htmlFor="sa-relink-email">Send via email (optional)</label>
+                    <input
+                      id="sa-relink-email"
+                      className="sa-form-input"
+                      type="email"
+                      placeholder="recipient@example.com"
+                      maxLength={254}
+                      value={relinkEmail}
+                      onChange={e => setRelinkEmail(e.target.value)}
+                    />
+                  </div>
+                  {relinkError && <p className="sa-form-error" role="alert" style={{ marginTop: 8 }}>{relinkError}</p>}
+                  <div className="sa-dialog__actions" style={{ marginTop: 16 }}>
+                    <button type="button" className="btn btn--secondary" onClick={() => { setRelinkAccountFor(null); setRelinkCode(null) }} disabled={relinkSendingEmail}>
+                      Done
+                    </button>
+                    <button type="submit" className="btn btn--primary" disabled={relinkSendingEmail || !relinkEmail.trim()}>
+                      {relinkSendingEmail ? 'Sending…' : 'Send email'}
+                    </button>
+                  </div>
+                </form>
+              </div>
             )}
           </div>
         </div>

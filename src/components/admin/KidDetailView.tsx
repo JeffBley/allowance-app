@@ -9,9 +9,10 @@ interface Props {
   kid: KidView
   tithingEnabled: boolean
   onBack: () => void
+  onDataChange?: () => void | Promise<unknown>
 }
 
-export default function KidDetailView({ kid, tithingEnabled, onBack }: Props) {
+export default function KidDetailView({ kid, tithingEnabled, onBack, onDataChange }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>('summary')
 
   return (
@@ -52,8 +53,9 @@ export default function KidDetailView({ kid, tithingEnabled, onBack }: Props) {
         {activeTab === 'transactions' && (
           <TransactionsTab
             transactions={kid.transactions}
-            allowDelete={false}
-            allowEdit={false}
+            allowDelete={true}
+            allowEdit={true}
+            onDataChange={onDataChange}
           />
         )}
       </main>

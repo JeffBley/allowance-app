@@ -61,7 +61,13 @@ async function unlinkMember(request: HttpRequest, context: InvocationContext): P
     };
     await usersContainer.items.create(newUser);
 
-    // 2. Re-attribute all transactions from the old Entra OID to the new local OID
+    // 2. Re-attribute all transactions from the old Entra OID to the new local OID.
+    //
+    // Migrate serially with per-item error capture (mirrors inviteRedeem.ts link flow).
+    // If ANY migration fails we do NOT delete the old user — it remains as a recovery
+    // anchor so orphaned transactions remain queryable. The WHERE kidOid = @targetOid
+    // query is naturally idempotent on retry: transactions already re-attributed to the
+    // new local OID won't appear, so a retry only processes the remaining failures.
     const txnContainer = getContainer('transactions');
     const { resources: txns } = await txnContainer.items
       .query<Transaction>({
@@ -73,11 +79,50 @@ async function unlinkMember(request: HttpRequest, context: InvocationContext): P
       })
       .fetchAll();
 
-    await Promise.all(txns.map(t => txnContainer.item(t.id, familyId).replace({ ...t, kidOid: newLocalOid })));
-    context.log(`unlinkMember: migrated ${txns.length} transaction(s) from '${targetOid}' to '${newLocalOid}'`);
+    const failedTxnIds: string[] = [];
+    let migratedCount = 0;
+    for (const t of txns) {
+      try {
+        await txnContainer.item(t.id, familyId).replace({ ...t, kidOid: newLocalOid });
+        migratedCount++;
+      } catch (migrateErr) {
+        context.warn(`unlinkMember: failed to migrate transaction '${t.id}'`, migrateErr);
+        failedTxnIds.push(t.id);
+      }
+    }
 
-    // 3. Delete old user document
-    await usersContainer.item(targetOid, familyId).delete();
+    if (failedTxnIds.length > 0) {
+      // Partial migration — old Entra-linked user intentionally retained as recovery anchor.
+      // The admin can retry the unlink call (retry will re-query and only process remaining
+      // un-migrated transactions). The new local user also stays; re-running unlinkMember
+      // will fail with a 409 on the create, but the caller can instead invoke a manual retry
+      // tool or re-migrate via Cosmos Data Explorer. Two user rows is the safe failure mode.
+      context.error(
+        `unlinkMember: PARTIAL MIGRATION — ${migratedCount}/${txns.length} transactions migrated for '${targetOid}' → '${newLocalOid}'. ` +
+        `Failed IDs: [${failedTxnIds.join(', ')}]. Old user retained as recovery anchor.`,
+      );
+      return {
+        status: 500,
+        jsonBody: {
+          code: 'PARTIAL_MIGRATION',
+          message: 'Unlink partially completed. Please contact a super admin to resume the migration.',
+        },
+      };
+    }
+    context.log(`unlinkMember: migrated ${migratedCount} transaction(s) from '${targetOid}' to '${newLocalOid}'`);
+
+    // 3. Delete old user document — only reached when all transactions migrated.
+    // A 404 here means a previous retry already deleted it; treat as success.
+    try {
+      await usersContainer.item(targetOid, familyId).delete();
+    } catch (deleteErr) {
+      const errObj = deleteErr as Record<string, unknown>;
+      if (errObj['code'] === 404 || errObj['statusCode'] === 404) {
+        context.log(`unlinkMember: old user '${targetOid}' already deleted (retry path) — continuing`);
+      } else {
+        throw deleteErr;
+      }
+    }
     context.log(`unlinkMember: removed enrolled user '${targetOid}', created local '${newLocalOid}' in family '${familyId}'`);
 
     return {

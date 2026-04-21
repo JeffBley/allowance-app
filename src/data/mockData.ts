@@ -41,6 +41,8 @@ export interface Transaction {
   createdAt?: string            // ISO 8601 server write time — used for override comparison
   /** Income only — true (or absent) means 10% counts toward Tithing Owed */
   tithable?: boolean
+  /** Client-side computed: account balance immediately after this transaction (chronological order). */
+  balanceAfter?: number
 }
 
 export interface FamilyMember {
@@ -147,19 +149,62 @@ export function computeKidView(member: FamilyMember, allTransactions: Transactio
       .filter(t => t.category === 'Income' && t.tithable !== false)
       .reduce((s, t) => s + Math.round(t.amount * 100), 0)
     const paidCents = tixns.filter(t => t.category === 'Tithing').reduce((s, t) => s + Math.round(t.amount * 100), 0)
-    // 10% of tithable income minus payments, all in cents, then floor at 0
+    // 10% of tithable income minus payments, all in cents.
+    // Allowed to go negative (credit) when the kid has overpaid.
     const owedCents =
       Math.round((ks?.tithingOwedOverride     ?? 0) * 100) +
       Math.round((ks?.purgedTithingOwedDelta  ?? 0) * 100) +
       Math.round(tithableIncomeCents * 0.1) -
       paidCents
-    return Math.max(0, owedCents) / 100
+    return owedCents / 100
   })()
 
   const lastTithingPaid = txns
     .filter(t => t.category === 'Tithing')
     .sort((a, b) => b.date.localeCompare(a.date))[0]?.date ?? null
 
-  return { ...member, balance, tithingOwed, lastTithingPaid, transactions: txns }
+  // Compute per-transaction running balance (bank-statement style).
+  // Values are fixed to each transaction chronologically; re-sorting for display
+  // does not change each transaction's balanceAfter.
+  const enrichedTransactions = (() => {
+    const sortKey = (t: Transaction) => t.createdAt ?? t.date
+    const toSigned = (t: Transaction) =>
+      t.category === 'Income' ? Math.round(t.amount * 100) : -Math.round(t.amount * 100)
+
+    if (overrideAt) {
+      const pre = txns
+        .filter(t => sortKey(t) <= overrideAt)
+        .sort((a, b) => sortKey(a).localeCompare(sortKey(b)))
+      const post = txns
+        .filter(t => sortKey(t) > overrideAt)
+        .sort((a, b) => sortKey(a).localeCompare(sortKey(b)))
+
+      let runCents = 0
+      const enrichedPre = pre.map(t => {
+        runCents += toSigned(t)
+        return { ...t, balanceAfter: runCents / 100 }
+      })
+
+      // Reset to override floor for post-override transactions
+      runCents =
+        Math.round((ks?.balanceOverride    ?? 0) * 100) +
+        Math.round((ks?.purgedBalanceDelta ?? 0) * 100)
+      const enrichedPost = post.map(t => {
+        runCents += toSigned(t)
+        return { ...t, balanceAfter: runCents / 100 }
+      })
+
+      return [...enrichedPre, ...enrichedPost]
+    } else {
+      const sorted = [...txns].sort((a, b) => sortKey(a).localeCompare(sortKey(b)))
+      let runCents = 0
+      return sorted.map(t => {
+        runCents += toSigned(t)
+        return { ...t, balanceAfter: runCents / 100 }
+      })
+    }
+  })()
+
+  return { ...member, balance, tithingOwed, lastTithingPaid, transactions: enrichedTransactions }
 }
 

@@ -453,6 +453,13 @@ body {
   font-size: 14px;
 }
 
+.td-balance {
+  font-weight: 600;
+  white-space: nowrap;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
 .td-amount--deposit {
   color: var(--success);
 }

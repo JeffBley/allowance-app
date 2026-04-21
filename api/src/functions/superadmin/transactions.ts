@@ -37,7 +37,9 @@ async function addTransaction(
     return { status: 400, jsonBody: { code: 'INVALID_DATE', message: 'date must be a valid ISO 8601 string.' } };
   }
   const normalizedDate = new Date(body.date).toISOString();
-  if (body.notes && body.notes.length > 500) {
+  // Strip ASCII control characters from notes (consistent with addTransaction.ts / editTransaction.ts).
+  const sanitizedNotes = (body.notes ?? '').replace(/[\x00-\x1f\x7f]/g, '');
+  if (sanitizedNotes.length > 500) {
     return { status: 400, jsonBody: { code: 'INVALID_NOTES', message: 'notes must be 500 characters or fewer.' } };
   }
 
@@ -56,7 +58,7 @@ async function addTransaction(
       kidOid:    body.kidOid,
       category:  body.category,
       amount:    body.amount,
-      notes:     body.notes ?? '',
+      notes:     sanitizedNotes,
       date:      normalizedDate,
       tithable:  body.category === 'Income' ? (body.tithable !== false) : undefined,
       createdBy: session.method === 'sso' && session.oid ? `superadmin:${session.oid}` : 'superadmin:bootstrap',

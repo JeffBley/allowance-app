@@ -36,6 +36,12 @@ async function deleteChore(request: HttpRequest, context: InvocationContext): Pr
 
     return { status: 204 };
   } catch (err) {
+    // A Cosmos 404 from the .delete() call means a concurrent request already deleted this
+    // chore. Return 404 (the resource is gone) rather than 500 (consistent with deleteTransaction.ts).
+    const errObj = err as Record<string, unknown>;
+    if (errObj['code'] === 404 || errObj['statusCode'] === 404) {
+      return { status: 404, jsonBody: { code: 'NOT_FOUND', message: 'Chore not found.' } };
+    }
     context.error('deleteChore error', err);
     return { status: 500, jsonBody: { code: 'INTERNAL_ERROR', message: 'Failed to delete chore.' } };
   }

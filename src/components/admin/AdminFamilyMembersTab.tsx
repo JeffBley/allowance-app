@@ -416,6 +416,8 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
     })
   }, [kids])
 
+
+
   const [edited, setEdited] = useState<LocalSettings>(() => ({
     ...DEFAULT_SETTINGS,
     ...(kids[0]?.kidSettings ?? {}),
@@ -428,6 +430,19 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
   const { apiFetch } = useApi()
   const [isSaving, setIsSaving]     = useState(false)
   const [saveError, setSaveError]   = useState<string | null>(null)
+
+  // String display states for the two amount inputs — lets the user clear/retype freely;
+  // the numeric fields in `edited` only update when the string is a valid number.
+  const [allowanceAmountInput, setAllowanceAmountInput] = useState(
+    () => String(kids[0]?.kidSettings?.allowanceAmount ?? DEFAULT_SETTINGS.allowanceAmount)
+  )
+  const [hourlyWageRateInput, setHourlyWageRateInput] = useState(
+    () => String(kids[0]?.kidSettings?.hourlyWageRate ?? DEFAULT_SETTINGS.hourlyWageRate)
+  )
+  // True when a string input has diverged from the last saved numeric value (e.g. field cleared)
+  const [amountInputsDirty, setAmountInputsDirty] = useState(false)
+  // Holds the fully-parsed settings to pass through the biweekly dialog flow
+  const pendingSettingsRef = useRef<LocalSettings | null>(null)
 
   // ── Rearrange members ─────────────────────────────────────────────────────
   const [rearrangeMode, setRearrangeMode]     = useState(false)
@@ -565,6 +580,13 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
   const [inviteHasUnsaved, setInviteHasUnsaved]           = useState(false)
   const [inviteSaving, setInviteSaving]                   = useState(false)
   const [inviteSaveError, setInviteSaveError]             = useState<string | null>(null)
+  // String display states for the invite amount inputs
+  const [invAllowanceAmountInput, setInvAllowanceAmountInput] = useState(
+    () => String(DEFAULT_SETTINGS.allowanceAmount)
+  )
+  const [invHourlyWageRateInput, setInvHourlyWageRateInput] = useState(
+    () => String(DEFAULT_SETTINGS.hourlyWageRate)
+  )
   const [deleteInviteFor, setDeleteInviteFor]             = useState<FamilyInviteCode | null>(null)
   const [deletingInvite, setDeletingInvite]               = useState<string | null>(null)
 
@@ -577,7 +599,10 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
     setSelectedAdminOid(null)  // deselect any admin
     setEditedInviteName(invite.displayNameHint ?? '')
     setEditedInviteRole(invite.role)
-    setEditedInviteSettings({ ...DEFAULT_SETTINGS, ...(invite.kidSettings ?? {}) })
+    const inviteSettings = { ...DEFAULT_SETTINGS, ...(invite.kidSettings ?? {}) }
+    setEditedInviteSettings(inviteSettings)
+    setInvAllowanceAmountInput(String(inviteSettings.allowanceAmount))
+    setInvHourlyWageRateInput(String(inviteSettings.hourlyWageRate ?? DEFAULT_SETTINGS.hourlyWageRate))
     setInviteHasUnsaved(false)
     setInviteSaveError(null)
   }
@@ -589,6 +614,18 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
 
   async function handleSaveInviteSettings() {
     if (!selectedInvite) return
+    // Build the final settings object with validated, parsed amounts
+    let finalInviteSettings = { ...editedInviteSettings }
+    if (editedInviteSettings.allowanceEnabled) {
+      const err = validateAmountInput(invAllowanceAmountInput, 'Allowance amount')
+      if (err) { setInviteSaveError(err); return }
+      finalInviteSettings = { ...finalInviteSettings, allowanceAmount: parseFloat(invAllowanceAmountInput) }
+    }
+    if (editedInviteSettings.hourlyWagesEnabled) {
+      const err = validateAmountInput(invHourlyWageRateInput, 'Hourly wage rate')
+      if (err) { setInviteSaveError(err); return }
+      finalInviteSettings = { ...finalInviteSettings, hourlyWageRate: parseFloat(invHourlyWageRateInput) }
+    }
     setInviteSaving(true)
     setInviteSaveError(null)
     try {
@@ -597,7 +634,7 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
         body: JSON.stringify({
           displayNameHint: editedInviteName.trim() || null,
           role: editedInviteRole,
-          kidSettings: editedInviteRole === 'User' ? editedInviteSettings : null,
+          kidSettings: editedInviteRole === 'User' ? finalInviteSettings : null,
         }),
       })
       setInviteHasUnsaved(false)
@@ -754,18 +791,45 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
   // Only consider kid settings "unsaved" when a kid is actually selected.
   // When an admin or invite is selected, selectedId is '' and savedPerKid['']
   // doesn't exist, which would incorrectly make hasUnsaved true.
-  const hasUnsaved   = !!selectedId && !settingsEqual(edited, currentSaved)
+  const hasUnsaved   = !!selectedId && (!settingsEqual(edited, currentSaved) || amountInputsDirty)
 
   useEffect(() => {
     onUnsavedStatusChange(hasUnsaved || inviteHasUnsaved)
   }, [hasUnsaved, inviteHasUnsaved, onUnsavedStatusChange])
+
+  // After a delete or unlink, the selected kid's OID is removed from `kids`.
+  // Reset the selection to the first available kid so the settings panel stays coherent.
+  useEffect(() => {
+    if (!selectedId) return
+    if (kids.some(k => k.oid === selectedId)) return
+    // Currently-selected kid no longer exists (deleted or unlinked) — fall back to first kid.
+    const fallback = kids[0] ?? null
+    setSelectedId(fallback?.oid ?? '')
+    setSelectedInviteCode(null)
+    setSelectedAdminOid(null)
+    if (fallback) {
+      const settings = { ...DEFAULT_SETTINGS, ...(savedPerKid[fallback.oid] ?? fallback.kidSettings ?? {}) }
+      setEdited(settings)
+      setAllowanceAmountInput(String(settings.allowanceAmount))
+      setHourlyWageRateInput(String(settings.hourlyWageRate ?? DEFAULT_SETTINGS.hourlyWageRate))
+      setAmountInputsDirty(false)
+    }
+  // savedPerKid is intentionally omitted — we only need to react when the kids list changes,
+  // not when savedPerKid is updated independently (which would cause cascading resets).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kids])
 
   function doSelectKid(id: string) {
     setSelectedId(id)
     setSelectedInviteCode(null)   // deselect any pending invite
     setSelectedAdminOid(null)     // deselect any admin
     const k = kids.find(k => k.oid === id)
-    setEdited({ ...DEFAULT_SETTINGS, ...(savedPerKid[id] ?? k?.kidSettings ?? {}) })
+    const settings = { ...DEFAULT_SETTINGS, ...(savedPerKid[id] ?? k?.kidSettings ?? {}) }
+    setEdited(settings)
+    setAllowanceAmountInput(String(settings.allowanceAmount))
+    setHourlyWageRateInput(String(settings.hourlyWageRate ?? DEFAULT_SETTINGS.hourlyWageRate))
+    setAmountInputsDirty(false)
+    pendingSettingsRef.current = null
     setPendingKidId(null)
   }
 
@@ -782,10 +846,21 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
     if (pendingKidId) doSelectKid(pendingKidId)
   }
 
-  async function commitSave(biweeklyStartDate?: string) {
+  function validateAmountInput(raw: string, fieldName: string): string | null {
+    if (raw.trim() === '') return `${fieldName} is required.`
+    const num = parseFloat(raw)
+    if (isNaN(num)) return `${fieldName} must be a valid number.`
+    if (num < 0) return `${fieldName} cannot be negative.`
+    if (num > 100000) return `${fieldName} cannot exceed $100,000.`
+    if (/\.\d{3,}/.test(raw)) return `${fieldName} cannot have more than 2 decimal places.`
+    return null
+  }
+
+  async function commitSave(biweeklyStartDate?: string, settingsOverride?: LocalSettings) {
+    const base = settingsOverride ?? edited
     const settingsToSave: KidSettings = biweeklyStartDate
-      ? { ...edited, biweeklyStartDate }
-      : { ...edited }
+      ? { ...base, biweeklyStartDate }
+      : { ...base }
     setIsSaving(true)
     setSaveError(null)
     try {
@@ -797,7 +872,12 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
       // nextAllowanceDate (or preserved the scheduler's date) which the client doesn't know.
       const savedSettings = result.user.kidSettings
       setSavedPerKid(prev => ({ ...prev, [selectedId]: savedSettings }))
-      setEdited({ ...DEFAULT_SETTINGS, ...savedSettings })
+      const merged = { ...DEFAULT_SETTINGS, ...savedSettings }
+      setEdited(merged)
+      setAllowanceAmountInput(String(merged.allowanceAmount))
+      setHourlyWageRateInput(String(merged.hourlyWageRate ?? DEFAULT_SETTINGS.hourlyWageRate))
+      setAmountInputsDirty(false)
+      pendingSettingsRef.current = null
       setShowBiweeklyDialog(false)
       onSettingsSaved()
     } catch {
@@ -808,10 +888,24 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
   }
 
   async function handleSaveClick() {
-    if (needsBiweeklyStartDialog(edited, currentSaved)) {
+    setSaveError(null)
+    // Build the final settings object with validated, parsed amounts
+    let finalSettings = { ...edited }
+    if (edited.allowanceEnabled) {
+      const err = validateAmountInput(allowanceAmountInput, 'Allowance amount')
+      if (err) { setSaveError(err); return }
+      finalSettings = { ...finalSettings, allowanceAmount: parseFloat(allowanceAmountInput) }
+    }
+    if (edited.hourlyWagesEnabled) {
+      const err = validateAmountInput(hourlyWageRateInput, 'Hourly wage rate')
+      if (err) { setSaveError(err); return }
+      finalSettings = { ...finalSettings, hourlyWageRate: parseFloat(hourlyWageRateInput) }
+    }
+    if (needsBiweeklyStartDialog(finalSettings, currentSaved)) {
+      pendingSettingsRef.current = finalSettings
       setShowBiweeklyDialog(true)
     } else {
-      await commitSave()
+      await commitSave(undefined, finalSettings)
     }
   }
 
@@ -1191,11 +1285,15 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
                   <input
                     id="allowance-amount"
                     className="amount-input amount-input--sm"
-                    type="number"
-                    min="0"
-                    step="0.50"
-                    value={edited.allowanceAmount}
-                    onChange={e => updateField('allowanceAmount', parseFloat(e.target.value) || 0)}
+                    type="text"
+                    inputMode="decimal"
+                    value={allowanceAmountInput}
+                    onChange={e => {
+                      setAllowanceAmountInput(e.target.value)
+                      setAmountInputsDirty(true)
+                      const n = parseFloat(e.target.value)
+                      if (!isNaN(n)) updateField('allowanceAmount', n)
+                    }}
                   />
                 </div>
               </div>
@@ -1317,11 +1415,15 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
                   <input
                     id="hourly-wage-rate"
                     className="amount-input amount-input--sm"
-                    type="number"
-                    min="0"
-                    step="0.25"
-                    value={edited.hourlyWageRate ?? 10}
-                    onChange={e => updateField('hourlyWageRate', parseFloat(e.target.value) || DEFAULT_SETTINGS.hourlyWageRate)}
+                    type="text"
+                    inputMode="decimal"
+                    value={hourlyWageRateInput}
+                    onChange={e => {
+                      setHourlyWageRateInput(e.target.value)
+                      setAmountInputsDirty(true)
+                      const n = parseFloat(e.target.value)
+                      if (!isNaN(n)) updateField('hourlyWageRate', n)
+                    }}
                   />
                 </div>
                 <p className="form-hint" style={{ marginTop: 4 }}>per hour</p>
@@ -1531,11 +1633,15 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
                           <input
                             id="inv-amount"
                             className="amount-input amount-input--sm"
-                            type="number"
-                            min="0"
-                            step="0.50"
-                            value={editedInviteSettings.allowanceAmount}
-                            onChange={e => updateInviteField('allowanceAmount', parseFloat(e.target.value) || 0)}
+                            type="text"
+                            inputMode="decimal"
+                            value={invAllowanceAmountInput}
+                            onChange={e => {
+                              setInvAllowanceAmountInput(e.target.value)
+                              setInviteHasUnsaved(true)
+                              const n = parseFloat(e.target.value)
+                              if (!isNaN(n)) updateInviteField('allowanceAmount', n)
+                            }}
                           />
                         </div>
                       </div>
@@ -1641,11 +1747,15 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
                           <input
                             id="inv-wage-rate"
                             className="amount-input amount-input--sm"
-                            type="number"
-                            min="0"
-                            step="0.25"
-                            value={editedInviteSettings.hourlyWageRate ?? 10}
-                            onChange={e => updateInviteField('hourlyWageRate', parseFloat(e.target.value) || 0)}
+                            type="text"
+                            inputMode="decimal"
+                            value={invHourlyWageRateInput}
+                            onChange={e => {
+                              setInvHourlyWageRateInput(e.target.value)
+                              setInviteHasUnsaved(true)
+                              const n = parseFloat(e.target.value)
+                              if (!isNaN(n)) updateInviteField('hourlyWageRate', n)
+                            }}
                           />
                         </div>
                         <p className="form-hint" style={{ marginTop: 4 }}>per hour</p>
@@ -1695,14 +1805,14 @@ export default function AdminFamilyMembersTab({ kids, members, pendingInvites, t
             <div className="biweekly-start-options">
               <button
                 className="biweekly-start-option"
-                onClick={() => commitSave(nextOccurrence.toISOString())}
+                onClick={() => commitSave(nextOccurrence.toISOString(), pendingSettingsRef.current ?? undefined)}
               >
                 <span className="biweekly-start-option__label">Next occurrence</span>
                 <span className="biweekly-start-option__date">{formatDateLong(nextOccurrence)}</span>
               </button>
               <button
                 className="biweekly-start-option"
-                onClick={() => commitSave(followingOccurrence.toISOString())}
+                onClick={() => commitSave(followingOccurrence.toISOString(), pendingSettingsRef.current ?? undefined)}
               >
                 <span className="biweekly-start-option__label">Following week</span>
                 <span className="biweekly-start-option__date">{formatDateLong(followingOccurrence)}</span>

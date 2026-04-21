@@ -5,16 +5,6 @@ import { EmailClient } from '@azure/communication-email';
 import { DefaultAzureCredential } from '@azure/identity';
 import type { InviteCode, GenerateInviteRequest, Family, User } from '../../data/models.js';
 
-/** Escapes a string for safe inclusion in an HTML context. */
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#x27;');
-}
-
 // ---------------------------------------------------------------------------
 // GET    /api/superadmin/families/{familyId}/invites  — list invite codes
 // POST   /api/superadmin/families/{familyId}/invites  — generate an invite code
@@ -307,9 +297,23 @@ app.http('superadminInviteEmail', {
             </div>`,
         },
       });
-      await poller.pollUntilDone();
+
+      // Record the send attempt BEFORE awaiting completion so that even if
+      // the background poll throws (ACS transient failure), the rate window is
+      // still consumed and a rapid retry is throttled (mirrors family-admin
+      // sendInviteEmail.ts / KI-0068).
       lastSentAtSA.set(code, Date.now());
-      ctx.log(`superadmin: sent invite email for code '${code}' to '${recipientEmail}'`);
+
+      // Fire pollUntilDone() in the background for telemetry only — pollUntilDone
+      // blocks 30-60 s waiting for ACS delivery confirmation, which would leave the
+      // UI stuck on "Sending\u2026". The email is already submitted to ACS at this point.
+      poller.pollUntilDone().then(() => {
+        ctx.log(`superadminInviteEmail: ACS confirmed delivery for code '${code}'`);
+      }).catch((pollErr: unknown) => {
+        ctx.warn(`superadminInviteEmail: ACS delivery poll failed for code '${code}'`, pollErr);
+      });
+
+      ctx.log(`superadmin: submitted invite email for code '${code}' to '${recipientEmail}'`);
 
       return { status: 200, jsonBody: { message: 'Invite email sent.' } };
     } catch (err) {

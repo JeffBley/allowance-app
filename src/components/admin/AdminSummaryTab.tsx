@@ -30,7 +30,7 @@ function formatNextAllowance(iso: string): string {
 }
 
 function formatMoney(amount: number): string {
-  return `$${amount.toFixed(2)}`
+  return amount < 0 ? `-$${(-amount).toFixed(2)}` : `$${amount.toFixed(2)}`
 }
 
 export default function AdminSummaryTab({ kids, choreBasedIncomeEnabled, chores, tithingEnabled, onDataChange }: Props) {
@@ -44,6 +44,7 @@ export default function AdminSummaryTab({ kids, choreBasedIncomeEnabled, chores,
         kid={selectedKid}
         tithingEnabled={tithingEnabled}
         onBack={() => setSelectedKid(null)}
+        onDataChange={onDataChange}
       />
     )
   }

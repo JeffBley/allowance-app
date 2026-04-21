@@ -25,7 +25,10 @@ export default function App() {
   const [pendingInvites, setPendingInvites] = useState<FamilyInviteCode[]>([])
   const [loading, setLoading]         = useState(true)
   const [errorCode, setErrorCode]     = useState<string | null>(null)
-  const [errorDetail, setErrorDetail] = useState<{ status?: number; apiCode?: string; message?: string; source?: string; ts: string } | null>(null)
+  // errorDetail is intentionally limited to NON-SENSITIVE metadata only (HTTP status,
+  // well-known error code, source label, timestamp). We deliberately do NOT store the
+  // raw API error `message` field — that could leak internal detail (KI-0062).
+  const [errorDetail, setErrorDetail] = useState<{ status?: number; apiCode?: string; source?: string; ts: string } | null>(null)
   const [refreshError, setRefreshError] = useState<string | null>(null)
   const retryTimerRef                 = useRef<ReturnType<typeof setTimeout> | null>(null)
   // null = "not chosen yet"; will show RolePicker for multi-role users
@@ -93,9 +96,8 @@ export default function App() {
               const status = typeof e?.['status'] === 'number' ? (e['status'] as number) : undefined
               const body = e?.['body'] as Record<string, unknown> | undefined
               const apiCode = typeof body?.['code'] === 'string' ? (body['code'] as string) : undefined
-              const message = typeof body?.['message'] === 'string' ? (body['message'] as string) : undefined
               const source = typeof e?.['_source'] === 'string' ? (e['_source'] as string) : undefined
-              setErrorDetail({ status, apiCode, message, source, ts: new Date().toISOString() })
+              setErrorDetail({ status, apiCode, source, ts: new Date().toISOString() })
 
               if (status === 404) {
                 setErrorCode('not-enrolled')

@@ -26,7 +26,10 @@ async function deleteTransaction(request: HttpRequest, context: InvocationContex
   try {
     const txnContainer = getContainer('transactions');
 
-    // Read first to capture the snapshot for the audit log
+    // Read first to verify the transaction exists and belongs to this family.
+    // (We must read via the familyId partition key so a 404 here means "not in this family"
+    // rather than a blind cross-partition delete that would quietly succeed if the ID existed
+    // under a different partition.)
     const { resource: existing } = await txnContainer.item(transactionId, scope.familyId).read<Transaction>();
 
     if (!existing) {

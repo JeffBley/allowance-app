@@ -50,45 +50,13 @@ async function deleteMember(request: HttpRequest, context: InvocationContext): P
     const txnContainer = getContainer('transactions');
     const { resources: txns } = await txnContainer.items
       .query<Transaction>({
-        query: 'SELECT * FROM c WHERE c.familyId = @familyId AND c.kidOid = @kidOid',
+        query: 'SELECT c.id FROM c WHERE c.familyId = @familyId AND c.kidOid = @kidOid',
         parameters: [
           { name: '@familyId', value: scope.familyId },
           { name: '@kidOid',   value: targetOid },
         ],
       })
       .fetchAll();
-
-    // Compute last known balance and tithingOwed using integer-cent arithmetic to
-    // prevent floating-point drift across many transactions (mirrors computeKidView in the frontend).
-    // Use createdAt (server write time) vs balanceOverrideAt (full datetime) so that
-    // transactions created AFTER the override are included, while those created before
-    // (e.g. an allowance paid before the admin set the override floor) are excluded.
-    const ks = user.kidSettings;
-    const overrideAt = ks?.balanceOverrideAt ?? null;
-    const txnsForBalance = overrideAt ? txns.filter(t => (t.createdAt ?? t.date) > overrideAt) : txns;
-
-    const balanceCents =
-      Math.round((ks?.balanceOverride    ?? 0) * 100) +
-      Math.round((ks?.purgedBalanceDelta ?? 0) * 100) +
-      txnsForBalance.reduce(
-        (sum, t) => sum + Math.round(t.amount * 100) * (t.category === 'Income' ? 1 : -1),
-        0,
-      );
-    const lastBalance = balanceCents / 100;
-
-    const tithableIncomeCents = txnsForBalance
-      .filter(t => t.category === 'Income' && t.tithable !== false)
-      .reduce((s, t) => s + Math.round(t.amount * 100), 0);
-    const tithingPaidCents = txnsForBalance
-      .filter(t => t.category === 'Tithing')
-      .reduce((s, t) => s + Math.round(t.amount * 100), 0);
-    const tithingOwedCents = Math.max(0,
-      Math.round((ks?.tithingOwedOverride    ?? 0) * 100) +
-      Math.round((ks?.purgedTithingOwedDelta ?? 0) * 100) +
-      Math.round(tithableIncomeCents * 0.1) -
-      tithingPaidCents,
-    );
-    const lastTithingOwed = tithingOwedCents / 100;
 
     // Delete all transactions. Promise.all rejects if any individual delete fails;
     // on partial failure the outer catch returns 500 and the user record is left
