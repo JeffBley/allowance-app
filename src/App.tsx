@@ -97,10 +97,39 @@ export default function App() {
               const body = e?.['body'] as Record<string, unknown> | undefined
               const apiCode = typeof body?.['code'] === 'string' ? (body['code'] as string) : undefined
               const source = typeof e?.['_source'] === 'string' ? (e['_source'] as string) : undefined
+              const authStale = e?.['_authStale'] === true
+              const networkError = e?.['_networkError'] === true
               setErrorDetail({ status, apiCode, source, ts: new Date().toISOString() })
 
               if (status === 404) {
                 setErrorCode('not-enrolled')
+              } else if (authStale) {
+                // MSAL local cache is corrupt. Auto-recover by clearing the
+                // cache and reloading — LoginGate will then redirect to Entra
+                // for a fresh sign-in. KI-0102 / KI-0103.
+                //
+                // Loop guard: if we already auto-recovered once this session
+                // and it didn't help, fall back to the manual screen so the
+                // user isn't trapped in a redirect loop (root cause is then
+                // likely a persistent browser policy like blocked storage).
+                const RECOVERY_MARKER = 'allowance.app.autoRecoveredAt'
+                const lastRecovery = Number(sessionStorage.getItem(RECOVERY_MARKER) ?? '0')
+                const recentlyRecovered = Date.now() - lastRecovery < 60_000
+                if (recentlyRecovered) {
+                  console.warn('[App] Auth still stale after recent auto-recovery; surfacing manual reset:', err)
+                  setErrorCode('session-stale')
+                } else {
+                  console.warn('[App] Auth cache is stale; auto-recovering:', err)
+                  try {
+                    sessionStorage.setItem(RECOVERY_MARKER, String(Date.now()))
+                  } catch { /* private mode — non-fatal */ }
+                  void handleResetSession()
+                  // Keep the loading spinner visible until the redirect fires.
+                  return
+                }
+              } else if (networkError) {
+                console.error('[App] Network failure loading family data:', err)
+                setErrorCode('network')
               } else {
                 console.error('[App] Failed to load family data:', err)
                 setErrorCode('error')
@@ -128,6 +157,48 @@ export default function App() {
 
   const handleSignOut = () => {
     instance.logoutRedirect({ account }).catch(console.error)
+  }
+
+  /**
+   * Hard-reset the local auth state and reload. Used when the MSAL cache is
+   * in an unrecoverable state (interaction_in_progress, monitor_window_timeout,
+   * stale PKCE state, etc. — see KI-0102 / KI-0103).
+   *
+   * Security:
+   *   - Only clears client-side caches; does not invalidate server-side tokens.
+   *   - No tokens are logged or surfaced to the UI.
+   *   - Reloads to the app root so the next render triggers a fresh sign-in.
+   *
+   * Loop guard: sets a sessionStorage marker before reloading. If the same
+   * stale-cache failure recurs immediately after a reset, the auto-recovery
+   * path bails out and shows the manual screen so the user isn't trapped in
+   * a redirect loop (e.g. blocked third-party cookies that prevent any
+   * silent token acquisition from ever succeeding).
+   */
+  const handleResetSession = async () => {
+    try {
+      // 1. MSAL's own cache (accounts, tokens, in-progress interaction state).
+      await instance.clearCache()
+    } catch (err) {
+      console.warn('[App] clearCache failed (continuing with manual cleanup):', err)
+    }
+    try {
+      // 2. Belt-and-suspenders: scrub MSAL's storage entries directly in case
+      //    clearCache left orphaned keys from an interrupted redirect. We
+      //    check both localStorage (PKCE temp state) and sessionStorage
+      //    (accounts/tokens) since the app uses both per msalConfig.
+      const scrub = (store: Storage) => Object.keys(store)
+        .filter(k => k.startsWith('msal.') || k.includes('login.windows.net') || k.includes('ciamlogin.com'))
+        .forEach(k => store.removeItem(k))
+      scrub(localStorage)
+      scrub(sessionStorage)
+    } catch (err) {
+      console.warn('[App] storage cleanup failed:', err)
+    }
+    // 3. Reload to the app root (drops any redirect-callback hash/state).
+    //    LoginGate will detect no authenticated account and auto-redirect
+    //    to Entra ID for a fresh sign-in.
+    window.location.replace(window.location.origin + '/')
   }
 
   /** Acquire an access token for the super admin API (used by SuperAdminApp). */
@@ -194,6 +265,65 @@ export default function App() {
   if (errorCode === 'not-enrolled') {
     return (
       <ActivationScreen onEnrolled={() => window.location.reload()} />
+    )
+  }
+
+  // Stale browser auth cache (interrupted redirect, blocked third-party cookies,
+  // restored session with stale PKCE state, etc.). Sign-out alone often won't
+  // help because logoutRedirect itself depends on a healthy cached account, so
+  // we offer a local-only reset that wipes MSAL state and reloads. KI-0102.
+  if (errorCode === 'session-stale') {
+    return (
+      <div className="app-error">
+        <div className="app-error__card">
+          <h2>Your sign-in session is out of date</h2>
+          <p>This browser&apos;s saved sign-in data is stale or was interrupted.</p>
+          <p style={{ fontSize: '0.85rem', color: '#475569', marginTop: 8 }}>
+            Resetting clears the saved session in this browser and takes you back to sign-in.
+            Your account and data are not affected.
+          </p>
+          <button
+            className="btn btn--primary"
+            onClick={handleResetSession}
+            style={{ marginTop: 16, width: '100%' }}
+          >
+            Reset session and sign in again
+          </button>
+          <button
+            className="btn btn--secondary"
+            onClick={handleSignOut}
+            style={{ marginTop: 8, width: '100%' }}
+          >
+            Try a normal sign-out instead
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Network failure (DNS, offline, CORS preflight, TLS). No HTTP status to show.
+  if (errorCode === 'network') {
+    return (
+      <div className="app-error">
+        <div className="app-error__card">
+          <h2>Can&apos;t reach the server</h2>
+          <p>We couldn&apos;t connect to the Allowance App API. Check your internet connection and try again.</p>
+          <button
+            className="btn btn--primary"
+            onClick={() => window.location.reload()}
+            style={{ marginTop: 16, width: '100%' }}
+          >
+            Retry
+          </button>
+          <button
+            className="btn btn--secondary"
+            onClick={handleSignOut}
+            style={{ marginTop: 8, width: '100%' }}
+          >
+            Sign out
+          </button>
+        </div>
+      </div>
     )
   }
 

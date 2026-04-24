@@ -9,12 +9,17 @@ import { PublicClientApplication, EventType } from '@azure/msal-browser';
 // For production, AZD injects these from Bicep outputs during `azd deploy`.
 //
 // Security decisions:
-//   - cacheLocation: 'localStorage'    → persists across tabs and survives the
-//     redirect cycle on mobile browsers (iOS Safari ITP clears sessionStorage
-//     during cross-origin redirects, causing PKCE state loss and AADSTS165000).
-//     XSS exposure window is slightly larger than sessionStorage, but the app
-//     already runs on HTTPS-only SWA and CSP headers reduce that risk.
-//   - storeAuthStateInCookie: removed in MSAL Browser v4/v5.
+//   - cacheLocation: 'sessionStorage' → tokens and accounts are scoped to the
+//     browser tab/session. Closing the browser drops them, forcing a fresh
+//     sign-in on next launch. This is the conservative default for an app
+//     that handles family financial data and is a deliberate trade-off
+//     against persistent SSO convenience (KI-0103).
+//   - MSAL Browser v5 always stores PKCE/request temporary state in
+//     sessionStorage internally (regardless of cacheLocation). The previous
+//     workaround for iOS Safari ITP via temporaryCacheLocation: 'localStorage'
+//     was removed from MSAL v5's typed config surface. If a redirect cycle
+//     loses PKCE state on iOS Safari, main.tsx already recovers by catching
+//     no_token_request_cache_error and falling through to a fresh sign-in.
 //   - Auth Code + PKCE is enforced by MSAL v2+ for public clients (no client secret).
 // ---------------------------------------------------------------------------
 
@@ -42,17 +47,13 @@ export const msalConfig: Configuration = {
     postLogoutRedirectUri: `${window.location.origin}/`,
   },
   cache: {
-    // localStorage: survives the cross-origin redirect cycle on mobile browsers.
-    // iOS Safari (ITP) clears sessionStorage when navigating to an external origin
-    // (bleytech.ciamlogin.com) and back, destroying the PKCE code_verifier/state
-    // and causing AADSTS165000 "Token was not provided" on return. localStorage
-    // is not cleared by ITP during redirects.
+    // sessionStorage: tokens/accounts cleared when the last tab for this
+    // origin closes. The user's next launch starts unauthenticated and the
+    // LoginGate will auto-redirect to Entra ID for a fresh sign-in.
     //
-    // Note: MSAL Browser v5 removed storeAuthStateInCookie (was a v2/v3 option).
-    // The "state is missing" error on browser restore is handled in main.tsx by
-    // catching no_token_request_cache_error and similar, cleaning the URL, and
-    // silently falling back to the sign-in screen.
-    cacheLocation: 'localStorage',
+    // MSAL Browser v5 internally stores PKCE temporary state in sessionStorage
+    // regardless of this setting, so this single value covers both buckets.
+    cacheLocation: 'sessionStorage',
   },
 };
 
